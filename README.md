@@ -24,13 +24,13 @@ Head to https://localhost:8091 to finish setting up your cluster.
 ### Step 2
 Clone this repository and `cd` into it:
 ```shell script
-git clone git@github.com:emilienbev/quarkus-performer.git
+git clone git@github.com:couchbaselabs/quarkus-performer.git
 cd quarkus-performer
 ```
 To install/use Mandrel, do:
 ```shell script
-sdk install java 24.0.2.r22-mandrel
-sdk use java 24.0.2.r22-mandrel    
+sdk install java 25.0.1.r25-mandrel
+sdk use java 25.0.1.r25-mandrel
 ```
 > Note that `sdk use java {version}` will use that version in your current shell. Opening a new terminal session will use the default Java version, which you can specify with `sdk default java {version}`.
 
