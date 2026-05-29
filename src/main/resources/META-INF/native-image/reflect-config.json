@@ -124,5 +124,11 @@
     "allPublicMethods": true,
     "queryAllPublicMethods": true,
     "allDeclaredFields": true
+  },
+  {
+    "name": "com.couchbase.client.core.transaction.CoreTransactionAttemptContext",
+    "methods": [
+      { "name": "hasExpiredClientSide", "parameterTypes": ["java.lang.String", "java.util.Optional"] }
+    ]
   }
 ]

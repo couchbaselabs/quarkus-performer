@@ -1,21 +1,21 @@
 counter=1
 
-echo "$counter - Fetching Couchbase Java SDK version and Quarkus version from quarkus-couchbase"
-((counter++))
-POM_CONTENT=$(curl -s https://raw.githubusercontent.com/quarkiverse/quarkus-couchbase/main/pom.xml)
-SDK_VERSION=$(echo "$POM_CONTENT" | awk -F'[<>]' '/couchbase.client.version/ {print $3}' | tr -d '[:space:]')
-QUARKUS_VERSION=$(echo "$POM_CONTENT" | grep -E '<quarkus\.version>' | grep -v 'platform' | awk -F'[<>]' '{print $3}' | tr -d '[:space:]')
-if [ -z "$SDK_VERSION" ]; then
-  echo "Error: Failed to fetch SDK version"
-  exit 1
-fi
-if [ -z "$QUARKUS_VERSION" ]; then
-  echo "Error: Failed to fetch Quarkus version"
-  exit 1
-fi
+#echo "$counter - Fetching Couchbase Java SDK version and Quarkus version from quarkus-couchbase"
+#((counter++))
+#POM_CONTENT=$(curl -s https://raw.githubusercontent.com/quarkiverse/quarkus-couchbase/main/pom.xml)
+#SDK_VERSION=$(echo "$POM_CONTENT" | awk -F'[<>]' '/couchbase.client.version/ {print $3}' | tr -d '[:space:]')
+#QUARKUS_VERSION=$(echo "$POM_CONTENT" | grep -E '<quarkus\.version>' | grep -v 'platform' | awk -F'[<>]' '{print $3}' | tr -d '[:space:]')
+#if [ -z "$SDK_VERSION" ]; then
+#  echo "Error: Failed to fetch SDK version"
+#  exit 1
+#fi
+#if [ -z "$QUARKUS_VERSION" ]; then
+#  echo "Error: Failed to fetch Quarkus version"
+#  exit 1
+#fi
 
 SDK_VERSION=3.10.1
-QUARKUS_VERSION=3.31.1
+QUARKUS_VERSION=3.36.0
 echo "Detected SDK version: $SDK_VERSION"
 echo "Detected Quarkus version: $QUARKUS_VERSION"
 
@@ -31,7 +31,7 @@ git clone -n --filter=blob:none --sparse git@github.com:couchbase/couchbase-jvm-
 cd couchbase-jvm-clients || exit
 # Fetch the specific tag
 git fetch origin tag "$SDK_VERSION" --depth=1
-git sparse-checkout set --no-cone /core-fit-performer/src/main/java/ /java-fit-performer/src/main/java/ /core-io/src/main/java/com/couchbase/client/core/transaction/forwards/
+git sparse-checkout set --no-cone /core-fit-performer/src/main/java/ /java-fit-performer/src/main/java/
 git checkout "tags/$SDK_VERSION"
 
 cd ..
@@ -54,10 +54,72 @@ echo "$counter - Copying .proto files from transactions-fit-performer"
 ((counter++))
 cp -r transactions-fit-performer/gRPC/*.proto src/main/proto/
 
-echo "$counter - Cloning and copying internal classes from core-io"
+echo "$counter - Making ExpiryUtil use reflection for cross-classloader access"
 ((counter++))
-mkdir -p "src/main/java/com/couchbase/client/core/transaction/forwards"
-cp -r couchbase-jvm-clients/core-io/src/main/java/com/couchbase/client/core/transaction/forwards/*.java src/main/java/com/couchbase/client/core/transaction/forwards/
+# ExpiryUtil (copied from java-fit-performer) lives in the SDK's com.couchbase.client.core.transaction
+# package so it can reach the package-private CoreTransactionAttemptContext.hasExpiredClientSide.
+# In Quarkus dev mode ExpiryUtil and CoreTransactionAttemptContext load in different classloaders,
+# so a direct package-private call throws IllegalAccessError. Reflection with setAccessible(true)
+# works across classloaders (and in the production jar and native image). The reflected method is
+# registered in src/main/resources/META-INF/native-image/reflect-config.json for native image.
+cat > src/main/java/com/couchbase/client/core/transaction/ExpiryUtil.java <<'EXPIRY_EOF'
+/*
+ * Copyright 2022 Couchbase, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+// [skip:<3.3.0]
+package com.couchbase.client.core.transaction;
+
+import java.lang.reflect.Method;
+import java.util.Optional;
+
+/**
+ * These methods need to access a package-private method on {@link CoreTransactionAttemptContext}.
+ *
+ * <p>The call is made via reflection rather than directly because under Quarkus dev mode the
+ * performer's own classes (loaded by the reloadable classloader) and the SDK (loaded by the base
+ * runtime classloader) live in different classloaders. A compile-time package-private call across
+ * those classloaders fails at runtime with {@code IllegalAccessError}, since the JVM's runtime
+ * package identity is (classloader + package name). {@code setAccessible(true)} bypasses that check,
+ * so this works in dev mode, the production runner jar, and native image alike. The reflected method
+ * is registered in {@code META-INF/native-image/reflect-config.json} so it remains invocable in the
+ * native image.
+ */
+public class ExpiryUtil {
+    private ExpiryUtil() {}
+
+    private static final Method HAS_EXPIRED_CLIENT_SIDE;
+
+    static {
+        try {
+            HAS_EXPIRED_CLIENT_SIDE = CoreTransactionAttemptContext.class
+                    .getDeclaredMethod("hasExpiredClientSide", String.class, Optional.class);
+            HAS_EXPIRED_CLIENT_SIDE.setAccessible(true);
+        } catch (NoSuchMethodException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    public static boolean hasExpired(CoreTransactionAttemptContext ctx, String stage, Optional<String> docId) {
+        try {
+            return (boolean) HAS_EXPIRED_CLIENT_SIDE.invoke(ctx, stage, docId);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException("Failed to invoke CoreTransactionAttemptContext.hasExpiredClientSide", e);
+        }
+    }
+}
+EXPIRY_EOF
 
 echo "$counter - Removing main method from JavaPerformer"
 ((counter++))

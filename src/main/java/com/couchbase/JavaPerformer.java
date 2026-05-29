@@ -92,12 +92,17 @@ import reactor.core.publisher.Hooks;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Enumeration;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import java.util.jar.Attributes;
+import java.util.jar.JarFile;
+import java.util.jar.Manifest;
 import java.util.stream.Collectors;
 
 import static com.couchbase.client.core.io.CollectionIdentifier.DEFAULT_COLLECTION;
@@ -135,7 +140,14 @@ public class JavaPerformer extends CorePerformer {
     @Override
     protected void customisePerformerCaps(PerformerCapsFetchResponse.Builder response) {
         response.addAllSdkImplementationCaps(Capabilities.sdkImplementationCaps());
-        var sdkVersion = "3.10.1-quarkus";
+        var sdkVersion = VersionUtil.introspectSDKVersionJava();
+        if (sdkVersion == null) {
+            // VersionUtil relies on Class.getPackage().getImplementationVersion(), which the Quarkus
+            // runtime classloader does not populate from jar manifests in JVM mode (it works in a native
+            // image, where the boot classloader exposes manifest attributes). Fall back to reading the
+            // SDK jar's manifest directly so JVM mode reports the same version as native.
+            sdkVersion = introspectSdkVersionFromManifest();
+        }
         if (sdkVersion == null) {
             // Not entirely clear why this fails sometimes on CI, return something sort of sensible as a default.
             sdkVersion = "3.5.0";
@@ -559,5 +571,37 @@ public class JavaPerformer extends CorePerformer {
 
     public static ClusterConnection getClusterConnection(@Nullable String clusterConnectionId) {
         return clusterConnections.get(clusterConnectionId);
+    }
+
+    /**
+     * Reads the Couchbase Java SDK version from the {@code java-client} jar manifest's main attributes.
+     *
+     * <p>This is a Quarkus-friendly alternative to {@link VersionUtil#introspectSDKVersionJava()}, whose
+     * {@code Package.getImplementationVersion()} approach returns null under the Quarkus runtime classloader
+     * in JVM mode. We locate the manifest by its {@code Bundle-SymbolicName} rather than by classpath order,
+     * then strip the trailing git hash (everything after the {@code +}).
+     */
+    private static @Nullable String introspectSdkVersionFromManifest() {
+        try {
+            Enumeration<URL> resources = JavaPerformer.class.getClassLoader().getResources(JarFile.MANIFEST_NAME);
+            while (resources.hasMoreElements()) {
+                URL manifestUrl = resources.nextElement();
+                try (var in = manifestUrl.openStream()) {
+                    Attributes attrs = new Manifest(in).getMainAttributes();
+                    if ("java-client".equals(attrs.getValue("Bundle-SymbolicName"))) {
+                        String version = attrs.getValue("Implementation-Version");
+                        if (version != null) {
+                            // ignore the git hash, which comes after the "+"
+                            return version.split("\\+", 2)[0];
+                        }
+                    }
+                } catch (IOException err) {
+                    // Skip manifests we can't read; keep scanning the rest.
+                }
+            }
+        } catch (IOException err) {
+            logger.warn("Failed to scan manifests for SDK version", err);
+        }
+        return null;
     }
 }

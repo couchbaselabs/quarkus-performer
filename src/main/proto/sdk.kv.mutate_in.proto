@@ -48,6 +48,8 @@ message MutateInOptions {
   optional bool preserve_expiry = 9;
 
   optional bool create_as_deleted = 10;
+
+  optional string parent_span_id = 11;
 }
 
 enum StoreSemantics {
