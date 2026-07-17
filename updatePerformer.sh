@@ -14,8 +14,8 @@ counter=1
 #  exit 1
 #fi
 
-SDK_VERSION=3.10.1
-QUARKUS_VERSION=3.36.0
+SDK_VERSION=3.13.0
+QUARKUS_VERSION=3.36.3
 echo "Detected SDK version: $SDK_VERSION"
 echo "Detected Quarkus version: $QUARKUS_VERSION"
 

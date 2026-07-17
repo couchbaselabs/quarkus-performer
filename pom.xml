@@ -12,7 +12,7 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
-        <quarkus.platform.version>3.36.0</quarkus.platform.version>
+        <quarkus.platform.version>3.36.3</quarkus.platform.version>
         <skipITs>true</skipITs>
         <surefire-plugin.version>3.5.4</surefire-plugin.version>
     </properties>
@@ -23,6 +23,18 @@
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>${quarkus.platform.artifact-id}</artifactId>
                 <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Align all Couchbase SDK artifacts (java-client, core-io,
+                 tracing/metrics-opentelemetry, metrics-micrometer) to a single
+                 revision. Without this, tracing-opentelemetry pulled core-io:3.10.1
+                 while the extension pulled java-client:3.13.0-SNAPSHOT, causing
+                 NoSuchFieldError: CoreTransactionsExtension.EXT_TTL. -->
+            <dependency>
+                <groupId>com.couchbase.client</groupId>
+                <artifactId>couchbase-client-bom</artifactId>
+                <version>3.13.0-SNAPSHOT</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -66,24 +78,25 @@
             <artifactId>rest-assured</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- Pinned to 1.31.0-alpha to match the version the Couchbase SDK 3.10.1
-             shaded code was built against. The SDK's shaded GrpcTelemetryBuilder
-             references non-shaded classes from opentelemetry-instrumentation-api
-             which changed incompatibly in 2.x. -->
+        <!-- Bumped to the 2.x OpenTelemetry instrumentation train (the Couchbase SDK 3.13.0
+             shaded GrpcTelemetryBuilder references non-shaded 2.x classes, notably
+             io.opentelemetry.instrumentation.api.incubator.semconv.rpc.RpcAttributesGetter).
+             This coordinate transitively brings opentelemetry-instrumentation-api-incubator,
+             which holds that class. The instrumentation-api / -incubator versions themselves
+             are governed by the Quarkus BOM (2.26.1 train) so they stay mutually consistent
+             with Quarkus' own opentelemetry extension. -->
         <dependency>
             <groupId>io.opentelemetry.instrumentation</groupId>
             <artifactId>opentelemetry-grpc-1.6</artifactId>
-            <version>1.31.0-alpha</version>
+            <version>2.23.0-alpha</version>
         </dependency>
         <dependency>
             <groupId>com.couchbase.client</groupId>
             <artifactId>tracing-opentelemetry</artifactId>
-            <version>3.10.1</version>
         </dependency>
         <dependency>
             <groupId>com.couchbase.client</groupId>
             <artifactId>metrics-opentelemetry</artifactId>
-            <version>3.10.1</version>
         </dependency>
         <dependency>
             <groupId>javax.annotation</groupId>
@@ -101,10 +114,12 @@
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-sdk</artifactId>
         </dependency>
+        <!-- Version governed by the Quarkus BOM (2.26.1) so it stays consistent with
+             opentelemetry-instrumentation-api-incubator. Do NOT pin a 1.x here: the SDK
+             3.13.0 shaded code needs the 2.x instrumentation API. -->
         <dependency>
             <groupId>io.opentelemetry.instrumentation</groupId>
             <artifactId>opentelemetry-instrumentation-api</artifactId>
-            <version>1.31.0</version>
         </dependency>
         <!-- Required for native image: the Couchbase SDK's shaded GrpcTelemetryBuilder
              references io.opentelemetry.semconv.SemanticAttributes which was removed in

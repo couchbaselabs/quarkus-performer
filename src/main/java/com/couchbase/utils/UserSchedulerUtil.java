@@ -76,5 +76,5 @@ public class UserSchedulerUtil {
           String hookType,
           @Nullable Exception locationWhereSchedulerCheckWasApplied
   ) {
-  }
+}
 }
