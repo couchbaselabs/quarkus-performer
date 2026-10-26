@@ -16,8 +16,6 @@
 
 package com.couchbase.search;
 
-// [skip:<3.4.5]
-
 import com.couchbase.JavaSdkCommandExecutor;
 import com.couchbase.client.core.cnc.RequestSpan;
 import com.couchbase.client.java.Cluster;
@@ -40,7 +38,9 @@ import com.couchbase.client.java.manager.search.UpsertSearchIndexOptions;
 import com.couchbase.client.java.search.HighlightStyle;
 import com.couchbase.client.java.search.SearchOptions;
 import com.couchbase.client.java.search.SearchQuery;
+import com.couchbase.client.java.search.SearchRequest;
 import com.couchbase.client.java.search.SearchScanConsistency;
+import com.couchbase.client.java.search.SearchScoring;
 import com.couchbase.client.java.search.facet.DateRange;
 import com.couchbase.client.java.search.facet.NumericRange;
 import com.couchbase.client.java.search.facet.SearchFacet;
@@ -53,16 +53,21 @@ import com.couchbase.client.java.search.sort.SearchFieldMode;
 import com.couchbase.client.java.search.sort.SearchFieldType;
 import com.couchbase.client.java.search.sort.SearchGeoDistanceUnits;
 import com.couchbase.client.java.search.sort.SearchSort;
-// [if:3.6.0]
 import com.couchbase.client.java.search.vector.VectorQuery;
 import com.couchbase.client.java.search.vector.VectorQueryCombination;
 import com.couchbase.client.java.search.vector.VectorSearch;
 import com.couchbase.client.java.search.vector.VectorSearchOptions;
-import com.couchbase.client.java.search.SearchRequest;
-// [end]
 import com.couchbase.client.java.util.Coordinate;
 import com.couchbase.client.performer.core.perf.PerRun;
 import com.couchbase.client.protocol.run.Result;
+import com.couchbase.client.protocol.sdk.search.BlockingSearchResult;
+import com.couchbase.client.protocol.sdk.search.Location;
+import com.couchbase.client.protocol.sdk.search.SearchFacetResult;
+import com.couchbase.client.protocol.sdk.search.SearchFacets;
+import com.couchbase.client.protocol.sdk.search.SearchFragments;
+import com.couchbase.client.protocol.sdk.search.SearchMetaData;
+import com.couchbase.client.protocol.sdk.search.SearchMetrics;
+import com.couchbase.client.protocol.sdk.search.SearchRowLocation;
 import com.couchbase.client.protocol.sdk.search.indexmanager.AllowQuerying;
 import com.couchbase.client.protocol.sdk.search.indexmanager.AnalyzeDocument;
 import com.couchbase.client.protocol.sdk.search.indexmanager.AnalyzeDocumentResult;
@@ -77,14 +82,6 @@ import com.couchbase.client.protocol.sdk.search.indexmanager.ResumeIngest;
 import com.couchbase.client.protocol.sdk.search.indexmanager.SearchIndexes;
 import com.couchbase.client.protocol.sdk.search.indexmanager.UnfreezePlan;
 import com.couchbase.client.protocol.sdk.search.indexmanager.UpsertIndex;
-import com.couchbase.client.protocol.sdk.search.BlockingSearchResult;
-import com.couchbase.client.protocol.sdk.search.Location;
-import com.couchbase.client.protocol.sdk.search.SearchFacetResult;
-import com.couchbase.client.protocol.sdk.search.SearchFacets;
-import com.couchbase.client.protocol.sdk.search.SearchFragments;
-import com.couchbase.client.protocol.sdk.search.SearchMetaData;
-import com.couchbase.client.protocol.sdk.search.SearchMetrics;
-import com.couchbase.client.protocol.sdk.search.SearchRowLocation;
 import com.couchbase.client.protocol.shared.ContentAs;
 import com.couchbase.stream.ReactiveSearchResultStreamer;
 import com.couchbase.utils.ContentAsUtil;
@@ -104,7 +101,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static com.couchbase.utils.UserSchedulerUtil.withSchedulerCheck;
 import static com.couchbase.JavaSdkCommandExecutor.convertMutationState;
 import static com.couchbase.JavaSdkCommandExecutor.setSuccess;
 import static com.couchbase.client.performer.core.util.TimeUtil.getTimeNow;
@@ -112,6 +108,7 @@ import static com.couchbase.client.protocol.sdk.search.MatchOperator.SEARCH_MATC
 import static com.couchbase.client.protocol.sdk.search.MatchOperator.SEARCH_MATCH_OPERATOR_OR;
 import static com.couchbase.client.protocol.sdk.search.SearchScanConsistency.SEARCH_SCAN_CONSISTENCY_NOT_BOUNDED;
 import static com.couchbase.client.protocol.streams.Type.STREAM_FULL_TEXT_SEARCH;
+import static com.couchbase.utils.UserSchedulerUtil.withSchedulerCheck;
 
 public class SearchHelper {
   private SearchHelper() {
@@ -301,7 +298,35 @@ public class SearchHelper {
       }
     }
 
+    if (o.hasDisableScoring()) {
+      opts.disableScoring(o.getDisableScoring());
+    }
+    if (o.hasScoring()) {
+      opts.scoring(convertScoring(o.getScoring()));
+    }
+
     return opts;
+  }
+
+  private static SearchScoring convertScoring(com.couchbase.client.protocol.sdk.search.SearchScoring scoring) {
+    if (scoring.hasNone()) return SearchScoring.disabled();
+
+    if (scoring.hasReciprocalRankFusion()) {
+      var fit = scoring.getReciprocalRankFusion();
+      var sdk = SearchScoring.reciprocalRankFusion();
+      if (fit.hasRankConstant()) sdk = sdk.withRankConstant(fit.getRankConstant());
+      if (fit.hasWindowSize()) sdk = sdk.withWindowSize(fit.getWindowSize());
+      return sdk;
+    }
+
+    if (scoring.hasRelativeScoreFusion()) {
+      var fit = scoring.getRelativeScoreFusion();
+      var sdk = SearchScoring.relativeScoreFusion();
+      if (fit.hasWindowSize()) sdk = sdk.withWindowSize(fit.getWindowSize());
+      return sdk;
+    }
+
+    throw new UnsupportedOperationException("Unrecognized SearchScoring: " + scoring);
   }
 
   private static Instant convertTimestamp(Timestamp timestamp) {
@@ -723,7 +748,6 @@ public class SearchHelper {
     }).then();
   }
 
-  // [if:3.6.0]
   public static Result handleSearchBlocking(Cluster cluster,
                                             @Nullable Scope scope,
                                             ConcurrentHashMap<String, RequestSpan> spans,
@@ -808,7 +832,6 @@ public class SearchHelper {
       });
     }).then();
   }
-  // [end]
 
   private static BlockingSearchResult convertResult(SearchResult result, @Nullable ContentAs fieldsAs) {
     return BlockingSearchResult.newBuilder()
@@ -1250,7 +1273,7 @@ public class SearchHelper {
     var o = request.getOptions();
 
     if (o.hasTimeoutMsecs()) {
-      out.timeout(Duration.ofMinutes(o.getTimeoutMsecs()));
+      out.timeout(Duration.ofMillis(o.getTimeoutMsecs()));
     }
     if (o.hasParentSpanId()) {
       out.parentSpan(spans.get(o.getParentSpanId()));
@@ -1269,7 +1292,7 @@ public class SearchHelper {
     var o = request.getOptions();
 
     if (o.hasTimeoutMsecs()) {
-      out.timeout(Duration.ofMinutes(o.getTimeoutMsecs()));
+      out.timeout(Duration.ofMillis(o.getTimeoutMsecs()));
     }
     if (o.hasParentSpanId()) {
       out.parentSpan(spans.get(o.getParentSpanId()));
@@ -1288,7 +1311,7 @@ public class SearchHelper {
     var o = request.getOptions();
 
     if (o.hasTimeoutMsecs()) {
-      out.timeout(Duration.ofMinutes(o.getTimeoutMsecs()));
+      out.timeout(Duration.ofMillis(o.getTimeoutMsecs()));
     }
     if (o.hasParentSpanId()) {
       out.parentSpan(spans.get(o.getParentSpanId()));
@@ -1307,7 +1330,7 @@ public class SearchHelper {
     var o = request.getOptions();
 
     if (o.hasTimeoutMsecs()) {
-      out.timeout(Duration.ofMinutes(o.getTimeoutMsecs()));
+      out.timeout(Duration.ofMillis(o.getTimeoutMsecs()));
     }
     if (o.hasParentSpanId()) {
       out.parentSpan(spans.get(o.getParentSpanId()));
@@ -1326,7 +1349,7 @@ public class SearchHelper {
     var o = request.getOptions();
 
     if (o.hasTimeoutMsecs()) {
-      out.timeout(Duration.ofMinutes(o.getTimeoutMsecs()));
+      out.timeout(Duration.ofMillis(o.getTimeoutMsecs()));
     }
     if (o.hasParentSpanId()) {
       out.parentSpan(spans.get(o.getParentSpanId()));
@@ -1345,7 +1368,7 @@ public class SearchHelper {
     var o = request.getOptions();
 
     if (o.hasTimeoutMsecs()) {
-      out.timeout(Duration.ofMinutes(o.getTimeoutMsecs()));
+      out.timeout(Duration.ofMillis(o.getTimeoutMsecs()));
     }
     if (o.hasParentSpanId()) {
       out.parentSpan(spans.get(o.getParentSpanId()));
@@ -1364,7 +1387,7 @@ public class SearchHelper {
     var o = request.getOptions();
 
     if (o.hasTimeoutMsecs()) {
-      out.timeout(Duration.ofMinutes(o.getTimeoutMsecs()));
+      out.timeout(Duration.ofMillis(o.getTimeoutMsecs()));
     }
     if (o.hasParentSpanId()) {
       out.parentSpan(spans.get(o.getParentSpanId()));
@@ -1383,7 +1406,7 @@ public class SearchHelper {
     var o = request.getOptions();
 
     if (o.hasTimeoutMsecs()) {
-      out.timeout(Duration.ofMinutes(o.getTimeoutMsecs()));
+      out.timeout(Duration.ofMillis(o.getTimeoutMsecs()));
     }
     if (o.hasParentSpanId()) {
       out.parentSpan(spans.get(o.getParentSpanId()));
@@ -1402,7 +1425,7 @@ public class SearchHelper {
     var o = request.getOptions();
 
     if (o.hasTimeoutMsecs()) {
-      out.timeout(Duration.ofMinutes(o.getTimeoutMsecs()));
+      out.timeout(Duration.ofMillis(o.getTimeoutMsecs()));
     }
     if (o.hasParentSpanId()) {
       out.parentSpan(spans.get(o.getParentSpanId()));
@@ -1421,7 +1444,7 @@ public class SearchHelper {
     var o = request.getOptions();
 
     if (o.hasTimeoutMsecs()) {
-      out.timeout(Duration.ofMinutes(o.getTimeoutMsecs()));
+      out.timeout(Duration.ofMillis(o.getTimeoutMsecs()));
     }
     if (o.hasParentSpanId()) {
       out.parentSpan(spans.get(o.getParentSpanId()));
@@ -1440,7 +1463,7 @@ public class SearchHelper {
     var o = request.getOptions();
 
     if (o.hasTimeoutMsecs()) {
-      out.timeout(Duration.ofMinutes(o.getTimeoutMsecs()));
+      out.timeout(Duration.ofMillis(o.getTimeoutMsecs()));
     }
     if (o.hasParentSpanId()) {
       out.parentSpan(spans.get(o.getParentSpanId()));
@@ -1459,7 +1482,7 @@ public class SearchHelper {
     var o = request.getOptions();
 
     if (o.hasTimeoutMsecs()) {
-      out.timeout(Duration.ofMinutes(o.getTimeoutMsecs()));
+      out.timeout(Duration.ofMillis(o.getTimeoutMsecs()));
     }
     if (o.hasParentSpanId()) {
       out.parentSpan(spans.get(o.getParentSpanId()));
@@ -1468,25 +1491,19 @@ public class SearchHelper {
     return out;
   }
 
-  // [if:3.6.0]
   private static VectorQuery toSdk(com.couchbase.client.protocol.sdk.search.VectorQuery fit) {
-
-    // [if:3.7.0]
     if (fit.hasBase64VectorQuery()) {
       VectorQuery sdk = VectorQuery.create(fit.getVectorFieldName(), fit.getBase64VectorQuery());
       applyVectorQueryOptions(sdk, fit);
       return sdk;
     }
-    // [end]
 
     var floats = Floats.toArray(fit.getVectorQueryList());
     VectorQuery sdk = VectorQuery.create(fit.getVectorFieldName(), floats);
     applyVectorQueryOptions(sdk, fit);
     return sdk;
   }
-  // [end]
 
-  // [if:3.6.0]
   private static void applyVectorQueryOptions(VectorQuery sdk, com.couchbase.client.protocol.sdk.search.VectorQuery fit) {
     if (fit.hasOptions()) {
       var opts = fit.getOptions();
@@ -1496,16 +1513,12 @@ public class SearchHelper {
       if (opts.hasBoost()) {
         sdk.boost(opts.getBoost());
       }
-      // [if:3.9.0]
       if (opts.hasPrefilter()) {
         sdk.prefilter(convertSearchQuery(opts.getPrefilter()));
       }
-      // [end]
     }
   }
-  // [end]
 
-  // [if:3.6.0]
   private static SearchRequest convertSearchRequest(com.couchbase.client.protocol.sdk.search.SearchRequest sr) {
     if (sr.hasSearchQuery()) {
       var out = SearchRequest.create(convertSearchQuery(sr.getSearchQuery()));
@@ -1541,5 +1554,4 @@ public class SearchHelper {
     }
     return out;
   }
-  // [end]
 }

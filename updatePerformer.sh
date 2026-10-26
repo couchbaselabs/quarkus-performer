@@ -1,153 +1,92 @@
-counter=1
+#!/usr/bin/env bash
+# Regenerates the performer from the Java FIT performer of one Couchbase Java SDK release, then
+# applies the changes that Quarkus needs. Runs on macOS and Linux.
+#
+# Read the versions from a quarkus-couchbase checkout, so the performer matches what the extension ships:
+#   QUARKUS_COUCHBASE_DIR=../quarkus-couchbase ./updatePerformer.sh
+# Or set them directly:
+#   SDK_VERSION=3.13.0 QUARKUS_VERSION=3.40.1 QUARKUS_COUCHBASE_VERSION=1.4.2 ./updatePerformer.sh
+set -euo pipefail
+cd "$(dirname "$0")"
 
-#echo "$counter - Fetching Couchbase Java SDK version and Quarkus version from quarkus-couchbase"
-#((counter++))
-#POM_CONTENT=$(curl -s https://raw.githubusercontent.com/quarkiverse/quarkus-couchbase/main/pom.xml)
-#SDK_VERSION=$(echo "$POM_CONTENT" | awk -F'[<>]' '/couchbase.client.version/ {print $3}' | tr -d '[:space:]')
-#QUARKUS_VERSION=$(echo "$POM_CONTENT" | grep -E '<quarkus\.version>' | grep -v 'platform' | awk -F'[<>]' '{print $3}' | tr -d '[:space:]')
-#if [ -z "$SDK_VERSION" ]; then
-#  echo "Error: Failed to fetch SDK version"
-#  exit 1
-#fi
-#if [ -z "$QUARKUS_VERSION" ]; then
-#  echo "Error: Failed to fetch Quarkus version"
-#  exit 1
-#fi
+SDK_REPO=${SDK_REPO:-https://github.com/couchbase/couchbase-jvm-clients.git}
+MVN=${MVN:-mvn}
+# Files under src/main/java that belong to this project. Everything else is copied from the SDK.
+QUARKUS_FILES=(
+  src/main/java/com/couchbase/QuarkusPerformer.java
+  src/main/java/com/couchbase/ReflectionProcessing.java
+)
 
-SDK_VERSION=3.13.0
-QUARKUS_VERSION=3.36.3
-echo "Detected SDK version: $SDK_VERSION"
-echo "Detected Quarkus version: $QUARKUS_VERSION"
+if [ -n "${QUARKUS_COUCHBASE_DIR:-}" ]; then
+  echo "Reading versions from $QUARKUS_COUCHBASE_DIR"
+  QUARKUS_VERSION=$($MVN -q -f "$QUARKUS_COUCHBASE_DIR/pom.xml" help:evaluate -Dexpression=quarkus.version -DforceStdout)
+  QUARKUS_COUCHBASE_VERSION=$($MVN -q -f "$QUARKUS_COUCHBASE_DIR/pom.xml" help:evaluate -Dexpression=project.version -DforceStdout)
+  deps=$(mktemp)
+  $MVN -q -f "$QUARKUS_COUCHBASE_DIR/runtime/pom.xml" dependency:list -DincludeArtifactIds=java-client -DoutputFile="$deps"
+  SDK_VERSION=$(grep -oE 'com\.couchbase\.client:java-client:jar:[^:]+' "$deps" | cut -d: -f4)
+  rm -f "$deps"
+fi
+: "${SDK_VERSION:?Set SDK_VERSION or QUARKUS_COUCHBASE_DIR}"
+: "${QUARKUS_VERSION:?Set QUARKUS_VERSION or QUARKUS_COUCHBASE_DIR}"
+: "${QUARKUS_COUCHBASE_VERSION:?Set QUARKUS_COUCHBASE_VERSION or QUARKUS_COUCHBASE_DIR}"
+echo "Java SDK $SDK_VERSION, Quarkus $QUARKUS_VERSION, quarkus-couchbase $QUARKUS_COUCHBASE_VERSION"
 
-echo "$counter - Updating Quarkus version in local pom.xml"
-((counter++))
-sed -i '' "s|<quarkus.platform.version>[^<]*</quarkus.platform.version>|<quarkus.platform.version>${QUARKUS_VERSION}</quarkus.platform.version>|" pom.xml
-
-echo "$counter - Cloning couchbase-jvm-clients (tag: $SDK_VERSION)"
-((counter++))
-
-# Step 1: Clone the repository with no files checked out
-git clone -n --filter=blob:none --sparse git@github.com:couchbase/couchbase-jvm-clients.git
-cd couchbase-jvm-clients || exit
-# Fetch the specific tag
-git fetch origin tag "$SDK_VERSION" --depth=1
-git sparse-checkout set --no-cone /core-fit-performer/src/main/java/ /java-fit-performer/src/main/java/
-git checkout "tags/$SDK_VERSION"
-
-cd ..
-echo "$counter - Cloning transactions-fit-performer"
-((counter++))
-
-git clone -n --depth=1 --filter=blob:none --sparse git@github.com:couchbaselabs/transactions-fit-performer.git
-cd transactions-fit-performer || exit
-git sparse-checkout set --no-cone /gRPC
-git checkout
-
-cd ..
-
-echo "$counter - Copying files from Core and Java Performers"
-((counter++))
-cp -r couchbase-jvm-clients/core-fit-performer/src/main/java/com/couchbase/* src/main/java/com/couchbase/
-cp -r couchbase-jvm-clients/java-fit-performer/src/main/java/com/couchbase/* src/main/java/com/couchbase/
-
-echo "$counter - Copying .proto files from transactions-fit-performer"
-((counter++))
-cp -r transactions-fit-performer/gRPC/*.proto src/main/proto/
-
-echo "$counter - Making ExpiryUtil use reflection for cross-classloader access"
-((counter++))
-# ExpiryUtil (copied from java-fit-performer) lives in the SDK's com.couchbase.client.core.transaction
-# package so it can reach the package-private CoreTransactionAttemptContext.hasExpiredClientSide.
-# In Quarkus dev mode ExpiryUtil and CoreTransactionAttemptContext load in different classloaders,
-# so a direct package-private call throws IllegalAccessError. Reflection with setAccessible(true)
-# works across classloaders (and in the production jar and native image). The reflected method is
-# registered in src/main/resources/META-INF/native-image/reflect-config.json for native image.
-cat > src/main/java/com/couchbase/client/core/transaction/ExpiryUtil.java <<'EXPIRY_EOF'
-/*
- * Copyright 2022 Couchbase, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-// [skip:<3.3.0]
-package com.couchbase.client.core.transaction;
-
-import java.lang.reflect.Method;
-import java.util.Optional;
-
-/**
- * These methods need to access a package-private method on {@link CoreTransactionAttemptContext}.
- *
- * <p>The call is made via reflection rather than directly because under Quarkus dev mode the
- * performer's own classes (loaded by the reloadable classloader) and the SDK (loaded by the base
- * runtime classloader) live in different classloaders. A compile-time package-private call across
- * those classloaders fails at runtime with {@code IllegalAccessError}, since the JVM's runtime
- * package identity is (classloader + package name). {@code setAccessible(true)} bypasses that check,
- * so this works in dev mode, the production runner jar, and native image alike. The reflected method
- * is registered in {@code META-INF/native-image/reflect-config.json} so it remains invocable in the
- * native image.
- */
-public class ExpiryUtil {
-    private ExpiryUtil() {}
-
-    private static final Method HAS_EXPIRED_CLIENT_SIDE;
-
-    static {
-        try {
-            HAS_EXPIRED_CLIENT_SIDE = CoreTransactionAttemptContext.class
-                    .getDeclaredMethod("hasExpiredClientSide", String.class, Optional.class);
-            HAS_EXPIRED_CLIENT_SIDE.setAccessible(true);
-        } catch (NoSuchMethodException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-
-    public static boolean hasExpired(CoreTransactionAttemptContext ctx, String stage, Optional<String> docId) {
-        try {
-            return (boolean) HAS_EXPIRED_CLIENT_SIDE.invoke(ctx, stage, docId);
-        } catch (ReflectiveOperationException e) {
-            throw new RuntimeException("Failed to invoke CoreTransactionAttemptContext.hasExpiredClientSide", e);
-        }
-    }
+# Applies a perl substitution to a file. Fails when the file does not change, so a patch that no
+# longer matches the upstream code stops the update instead of being skipped.
+patch_file() {
+  local file=$1 expr=$2 before
+  before=$(cksum < "$file")
+  perl -0pi -e "$expr" "$file"
+  if [ "$before" = "$(cksum < "$file")" ]; then
+    echo "Patch did not apply to $file: $expr" >&2
+    exit 1
+  fi
 }
-EXPIRY_EOF
 
-echo "$counter - Removing main method from JavaPerformer"
-((counter++))
-./deleteMethod.sh "public static void main" "src/main/java/com/couchbase/JavaPerformer.java" "false"
+echo "Updating versions in pom.xml"
+perl -0pi -e "s|<quarkus.platform.version>[^<]*<|<quarkus.platform.version>${QUARKUS_VERSION}<|" pom.xml
+perl -0pi -e "s|<couchbase-client.version>[^<]*<|<couchbase-client.version>${SDK_VERSION}<|" pom.xml
+perl -0pi -e "s|<quarkus-couchbase.version>[^<]*<|<quarkus-couchbase.version>${QUARKUS_COUCHBASE_VERSION}<|" pom.xml
 
-echo "$counter - Replacing broken InsecureTrustManagerFactory import"
-((counter++))
-sed -i '' 's/import io.grpc.netty.shaded.io.netty.handler.ssl.util.InsecureTrustManagerFactory;/import com.couchbase.client.core.deps.io.netty.handler.ssl.util.InsecureTrustManagerFactory;/' src/main/java/com/couchbase/utils/OptionsUtil.java
+echo "Fetching the FIT performer and protocol from couchbase-jvm-clients $SDK_VERSION"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+git clone -q --depth=1 --filter=blob:none --no-checkout --branch "$SDK_VERSION" "$SDK_REPO" "$work/sdk"
+git -C "$work/sdk" sparse-checkout set --no-cone \
+  /core-fit-performer/src/main/java/ \
+  /java-fit-performer/src/main/java/ \
+  /fit-performer-protocol/fit-protocol/operational/
+git -C "$work/sdk" checkout -q
+protocol="$work/sdk/fit-performer-protocol/fit-protocol/operational"
+if [ ! -d "$protocol" ]; then
+  echo "SDK $SDK_VERSION has no fit-performer-protocol/fit-protocol/operational directory" >&2
+  exit 1
+fi
 
-echo "$counter - Adjusting performer for Quarkus compatibility"
-((counter++))
-sed -i '' '/response\.addPerformerCaps(Caps\.OBSERVABILITY_1);/d' src/main/java/com/couchbase/JavaPerformer.java
-#Deleting the 3 lines configuring the custom scheduler
-sed -i '' '/var userExecutorAndScheduler = UserSchedulerUtil\.userExecutorAndScheduler();/ {
-  N
-  N
-  d
-}' src/main/java/com/couchbase/JavaPerformer.java
+echo "Replacing the copied sources and protos"
+keep=$(mktemp -d)
+for f in "${QUARKUS_FILES[@]}"; do mkdir -p "$keep/$(dirname "$f")" && cp "$f" "$keep/$f"; done
+rm -rf src/main/java src/main/proto
+mkdir -p src/main/java src/main/proto
+cp -R "$work/sdk/core-fit-performer/src/main/java/." src/main/java/
+cp -R "$work/sdk/java-fit-performer/src/main/java/." src/main/java/
+cp "$protocol"/*.proto src/main/proto/
+cp -R "$keep/src/main/java/." src/main/java/
+cp -R quarkus-overrides/. src/main/java/
+rm -rf "$keep"
 
-#Make logger public
-sed -i '' 's/private static final Logger logger = LoggerFactory.getLogger(JavaPerformer.class);/public static final Logger logger = LoggerFactory.getLogger(JavaPerformer.class);/' src/main/java/com/couchbase/JavaPerformer.java
+echo "Applying Quarkus changes"
+# Quarkus runs a gRPC method on a worker thread only when it or its declaring class has @Blocking.
+# The performer blocks on the SDK in every RPC, so none of them may run on the event loop.
+patch_file src/main/java/com/couchbase/client/performer/core/CorePerformer.java \
+  's/^(abstract public class CorePerformer |public abstract class CorePerformer )/\@io.smallrye.common.annotation.Blocking\n$1/m'
+patch_file src/main/java/com/couchbase/JavaPerformer.java \
+  's/^public class JavaPerformer /\@io.smallrye.common.annotation.Blocking\npublic class JavaPerformer /m'
+# Quarkus excludes grpc-netty-shaded. Use the copy of the class that the SDK shades.
+patch_file src/main/java/com/couchbase/utils/OptionsUtil.java \
+  's/import io\.grpc\.netty\.shaded\.io\.netty\.handler\.ssl\.util\.InsecureTrustManagerFactory;/import com.couchbase.client.core.deps.io.netty.handler.ssl.util.InsecureTrustManagerFactory;/'
+# The performer does not support the OpenTelemetry observability tests.
+patch_file src/main/java/com/couchbase/JavaPerformer.java \
+  's/^\s*response\.addPerformerCaps\(Caps\.OBSERVABILITY_1\);\n//m'
 
-#Deletes the body of UserSchedulerUtil.assertInCustomUserSchedulerThread
-./deleteMethod.sh "private static void assertInCustomUserSchedulerThread" "src/main/java/com/couchbase/utils/UserSchedulerUtil.java" "true"
-
-echo "$counter - Delete cloned repositories"
-((counter++))
-rm -rf couchbase-jvm-clients
-rm -rf transactions-fit-performer
-
-
+echo "Done. Build with: mvn clean package (add -Dnative for a native executable)"

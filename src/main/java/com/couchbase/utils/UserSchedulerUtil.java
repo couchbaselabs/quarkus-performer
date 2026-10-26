@@ -76,5 +76,17 @@ public class UserSchedulerUtil {
           String hookType,
           @Nullable Exception locationWhereSchedulerCheckWasApplied
   ) {
-}
+    String threadName = Thread.currentThread().getName();
+    boolean isUserThread = threadName.contains(USER_SCHEDULER_THREAD_POOL_NAME);
+
+    if (!isUserThread) {
+      String location = locationWhereSchedulerCheckWasApplied == null
+              ? "To discover the location of the failed scheduler check, set CAPTURE_STACK_TRACE to true in performer source code."
+              : Throwables.getStackTraceAsString(locationWhereSchedulerCheckWasApplied);
+
+      String msg = "Expected reactive " + hookType + " handler to run in custom user scheduler thread, but thread name was: " + threadName + " ; location = " + location;
+      logger.error(msg);
+      throw new InternalPerformerFailure(new RuntimeException(msg));
+    }
+  }
 }
