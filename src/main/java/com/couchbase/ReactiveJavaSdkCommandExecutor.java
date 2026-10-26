@@ -17,43 +17,27 @@ package com.couchbase;
 
 import com.couchbase.client.core.cnc.RequestSpan;
 import com.couchbase.client.java.ReactiveCollection;
-import com.couchbase.client.java.kv.*;
-import com.couchbase.client.java.query.ReactiveQueryResult;
+import com.couchbase.client.java.kv.CounterResult;
+import com.couchbase.client.java.kv.GetReplicaResult;
 import com.couchbase.client.java.kv.GetResult;
+import com.couchbase.client.java.kv.MutateInResult;
 import com.couchbase.client.java.kv.MutationResult;
-import com.couchbase.client.protocol.sdk.Command;
-import com.couchbase.utils.ContentAsUtil;
-import static com.couchbase.JavaSdkCommandExecutor.*;
-import static com.couchbase.client.protocol.streams.Type.STREAM_KV_GET_ALL_REPLICAS;
-// [if:3.2.1]
-import com.couchbase.eventing.EventingHelper;
-// [end]
-// [if:3.2.4]
-import com.couchbase.manager.BucketManagerHelper;
-// [end]
-// [if:3.4.12]
-import com.couchbase.manager.CollectionManagerHelper;
-// [end]
-// [if:3.4.1]
 import com.couchbase.client.java.kv.ScanResult;
-import static com.couchbase.JavaSdkCommandExecutor.convertScanType;
-import static com.couchbase.JavaSdkCommandExecutor.processScanResult;
-// [end]
+import com.couchbase.client.java.query.ReactiveQueryResult;
 import com.couchbase.client.performer.core.commands.SdkCommandExecutor;
 import com.couchbase.client.performer.core.perf.Counters;
 import com.couchbase.client.performer.core.perf.PerRun;
 import com.couchbase.client.protocol.run.Result;
+import com.couchbase.client.protocol.sdk.Command;
 import com.couchbase.client.protocol.shared.Exception;
-// [if:3.4.3]
+import com.couchbase.eventing.EventingHelper;
+import com.couchbase.manager.BucketManagerHelper;
+import com.couchbase.manager.CollectionManagerHelper;
 import com.couchbase.query.QueryIndexManagerHelper;
-// [end]
-// [if:3.4.5]
 import com.couchbase.search.SearchHelper;
-
-import static com.couchbase.search.SearchHelper.handleSearchQueryReactive;
-// [end]
 import com.couchbase.stream.FluxStreamer;
 import com.couchbase.utils.ClusterConnection;
+import com.couchbase.utils.ContentAsUtil;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -61,11 +45,22 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static com.couchbase.JavaPerformer.toSdkAuthenticator;
+import static com.couchbase.JavaSdkCommandExecutor.content;
+import static com.couchbase.JavaSdkCommandExecutor.convertExceptionShared;
+import static com.couchbase.JavaSdkCommandExecutor.convertMutateInSpec;
+import static com.couchbase.JavaSdkCommandExecutor.convertScanType;
+import static com.couchbase.JavaSdkCommandExecutor.createOptions;
+import static com.couchbase.JavaSdkCommandExecutor.populateResult;
+import static com.couchbase.JavaSdkCommandExecutor.processGetAllReplicasResult;
+import static com.couchbase.JavaSdkCommandExecutor.processScanResult;
+import static com.couchbase.JavaSdkCommandExecutor.setSuccess;
+import static com.couchbase.JavaSdkCommandExecutor.waitUntilReadyOptions;
 import static com.couchbase.client.performer.core.util.TimeUtil.getTimeNow;
+import static com.couchbase.client.protocol.streams.Type.STREAM_KV_GET_ALL_REPLICAS;
 import static com.couchbase.client.protocol.streams.Type.STREAM_KV_RANGE_SCAN;
-// [if:3.6.0]
+import static com.couchbase.search.SearchHelper.handleSearchQueryReactive;
 import static com.couchbase.search.SearchHelper.handleSearchReactive;
-// [end]
 import static com.couchbase.utils.UserSchedulerUtil.withSchedulerCheck;
 
 
@@ -128,6 +123,30 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
                     else setSuccess(result);
                     return result.build();
                 });
+            } else if (op.hasGetOrNull()) {
+                var request = op.getGetOrNull();
+                var collection = connection.collection(request.getLocation()).reactive();
+                var docId = getDocId(request.getLocation());
+                var options = createOptions(request, spans);
+                result.setInitiated(getTimeNow());
+                long start = System.nanoTime();
+                Mono<GetResult> gr;
+                if (options == null) gr = collection.getOrNull(docId);
+                else gr = collection.getOrNull(docId, options);
+                return withSchedulerCheck(gr)
+                        .flatMap(r -> {
+                            result.setElapsedNanos(System.nanoTime() - start);
+                            if (op.getReturnResult()) populateResult(request.getContentAs(), result, r);
+                            else setSuccess(result);
+                            return Mono.just(result.build());
+                        })
+                        // Called if no document was found
+                        .switchIfEmpty(Mono.fromSupplier(() -> {
+                            result.setElapsedNanos(System.nanoTime() - start);
+                            if (op.getReturnResult()) populateResult(request.getContentAs(), result, null);
+                            else setSuccess(result);
+                            return result.build();
+                        }));
             } else if (op.hasRemove()) {
                 var request = op.getRemove();
                 var collection = connection.collection(request.getLocation()).reactive();
@@ -178,7 +197,6 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
                     else setSuccess(result);
                     return result.build();
                 });
-            // [if:3.4.1]
             } else if (op.hasRangeScan()) {
                 var request = op.getRangeScan();
                 var collection = connection.collection(request.getCollection()).reactive();
@@ -199,7 +217,6 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
                                 .setType(STREAM_KV_RANGE_SCAN)
                                 .setStreamId(streamer.streamId())));
                 return Mono.just(result.build());
-                // [end]
             } else if (op.hasClusterCommand()) {
               return handleClusterLevelCommand(op, perRun, result);
             } else if (op.hasBucketCommand()) {
@@ -226,11 +243,31 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
               .reactive();
     }
 
-    // [if:3.4.3]
     if (clc.hasQueryIndexManager()) {
       return QueryIndexManagerHelper.handleCollectionQueryIndexManagerReactive(collection, spans, op, result);
     }
-    // [end]
+
+    if (clc.hasGetReplica()) {
+      var request = clc.getGetReplica();
+      var docId = getDocId(request.getLocation());
+      var strategy = FitReplicaHelper.toSdk(request.getStrategy());
+      var options = createOptions(request, spans);
+
+      long start = System.nanoTime();
+      var sdkResult = options == null
+              ? collection.getReplica(docId, strategy)
+              : collection.getReplica(docId, strategy, options);
+
+      return withSchedulerCheck(sdkResult).map(r -> {
+        result.setElapsedNanos(System.nanoTime() - start);
+        if (op.getReturnResult()) {
+          populateResult(result, r, request.getContentAs());
+        } else {
+          setSuccess(result);
+        }
+        return result.build();
+      });
+    }
 
     if (clc.hasGetAndLock()) {
       var request = clc.getGetAndLock();
@@ -351,7 +388,7 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
     if (clc.hasMutateIn()) {
       var request = clc.getMutateIn();
       var docId = getDocId(request.getLocation());
-      var options = createOptions(request);
+      var options = createOptions(request, spans);
       Mono<MutateInResult> mr;
       if (options == null) {
         mr = collection.mutateIn(docId, request.getSpecList().stream().map(v -> convertMutateInSpec(v)).toList());
@@ -371,7 +408,7 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
     if (clc.hasGetAllReplicas()) {
       var request = clc.getGetAllReplicas();
       var docId = getDocId(request.getLocation());
-      var options = createOptions(request);
+      var options = createOptions(request, spans);
       result.setInitiated(getTimeNow());
       long start = System.nanoTime();
       Flux<GetReplicaResult> results;
@@ -395,7 +432,7 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
     if (clc.hasGetAnyReplica()) {
       var request = clc.getGetAnyReplica();
       var docId = getDocId(request.getLocation());
-      var options = createOptions(request);
+      var options = createOptions(request, spans);
       result.setInitiated(getTimeNow());
       long start = System.nanoTime();
       Mono<GetReplicaResult> gr;
@@ -422,7 +459,7 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
       if (blc.hasIncrement()) {
         var request = blc.getIncrement();
         var docId = getDocId(request.getLocation());
-        var options = createOptions(request);
+        var options = createOptions(request, spans);
         result.setInitiated(getTimeNow());
         long start = System.nanoTime();
         Mono<CounterResult> cr;
@@ -445,7 +482,7 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
       if (blc.hasDecrement()) {
         var request = blc.getDecrement();
         var docId = getDocId(request.getLocation());
-        var options = createOptions(request);
+        var options = createOptions(request, spans);
         result.setInitiated(getTimeNow());
         long start = System.nanoTime();
         Mono<CounterResult> cr;
@@ -468,7 +505,7 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
       if (blc.hasAppend()) {
         var request = blc.getAppend();
         var docId = getDocId(request.getLocation());
-        var options = createOptions(request);
+        var options = createOptions(request, spans);
         result.setInitiated(getTimeNow());
         long start = System.nanoTime();
         Mono<MutationResult> mr;
@@ -491,7 +528,7 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
       if (blc.hasPrepend()) {
         var request = blc.getPrepend();
         var docId = getDocId(request.getLocation());
-        var options = createOptions(request);
+        var options = createOptions(request, spans);
         result.setInitiated(getTimeNow());
         long start = System.nanoTime();
         Mono<MutationResult> mr;
@@ -523,7 +560,6 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
     var slc = op.getScopeCommand();
     var scope = connection.cluster().bucket(slc.getScope().getBucketName()).scope(slc.getScope().getScopeName());
 
-    // [if:3.0.9]
     if (slc.hasQuery()) {
       var request = slc.getQuery();
       String query = request.getStatement();
@@ -540,24 +576,19 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
 
       return returnQueryResult(request, withSchedulerCheck(queryResult), result, start);
     }
-    // [end]
 
-    // [if:3.4.5]
     if (slc.hasSearch()) {
       return handleSearchQueryReactive(connection.cluster(), scope, spans, slc.getSearch(), perRun)
               .ofType(Result.class);
     } else if (slc.hasSearchIndexManager()) {
       return Mono.fromSupplier(() -> SearchHelper.handleScopeSearchIndexManager(scope, spans, op));
     }
-    // [end]
 
-    // [if:3.6.0]
     if (slc.hasSearchV2()) {
       // Streaming, so intentionally does not return a result.
       return handleSearchReactive(connection.cluster(), scope, spans, slc.getSearchV2(), perRun)
               .ofType(Result.class);
     }
-    // [end]
 
     return Mono.error(new UnsupportedOperationException("Unknown command " + op));
   }
@@ -587,11 +618,9 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
         return result.build();
       }));
     }
-    // [if:3.4.12]
     else if (blc.hasCollectionManager()) {
       return CollectionManagerHelper.handleCollectionManagerReactive(connection.cluster().reactive(), spans, op, result);
     }
-    // [end]
 
     return Mono.error(new UnsupportedOperationException("Unknown command " + op));
   }
@@ -621,24 +650,17 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
       }));
 
     }
-    // [if:3.2.4]
     else if (clc.hasBucketManager()) {
       return BucketManagerHelper.handleBucketManagerReactive(cluster, spans, op, result);
     }
-    // [end]
-    // [if:3.2.1]
     else if (clc.hasEventingFunctionManager()) {
       return EventingHelper.handleEventingFunctionManagerReactive(cluster, spans, op, result);
     }
-    // [end]
 
-    // [if:3.4.3]
     if (clc.hasQueryIndexManager()) {
       return QueryIndexManagerHelper.handleClusterQueryIndexManagerReactive(cluster, spans, op, result);
     }
-    // [end]
 
-    // [if:3.4.5]
     if (clc.hasSearch()) {
       // Streaming, so intentionally does not return a result.
       return handleSearchQueryReactive(connection.cluster(), null, spans, clc.getSearch(), perRun)
@@ -650,15 +672,12 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
       // same underlying logic as the blocking API.
       return Mono.fromSupplier(() -> SearchHelper.handleClusterSearchIndexManager(connection.cluster(), spans, op));
     }
-    // [end]
 
-    // [if:3.6.0]
     if (clc.hasSearchV2()) {
       // Streaming, so intentionally does not return a result.
       return handleSearchReactive(connection.cluster(), null, spans, clc.getSearchV2(), perRun)
               .ofType(Result.class);
     }
-    // [end]
 
     if (clc.hasQuery()) {
       var request = clc.getQuery();
@@ -675,6 +694,15 @@ public class ReactiveJavaSdkCommandExecutor extends SdkCommandExecutor {
       }
 
       return returnQueryResult(request, withSchedulerCheck(queryResult), result, start);
+    }
+
+    if (clc.hasAuthenticator()) {
+      return Mono.fromCallable(() -> {
+        var newAuthenticator = toSdkAuthenticator(clc.getAuthenticator());
+        connection.cluster().authenticator(newAuthenticator);
+        setSuccess(result);
+        return result.build();
+      });
     }
 
     return Mono.error(new UnsupportedOperationException("Unknown command " + op));
