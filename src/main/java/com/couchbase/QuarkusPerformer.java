@@ -2,7 +2,9 @@ package com.couchbase;
 
 import com.couchbase.client.core.logging.LogRedaction;
 import com.couchbase.client.core.logging.RedactionLevel;
+import com.couchbase.client.protocol.performer.PerformerCapsFetchResponse;
 import io.quarkus.grpc.GrpcService;
+import io.quarkus.runtime.ImageMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Hooks;
@@ -19,6 +21,9 @@ import java.util.stream.Collectors;
  *
  * <p>The static block repeats the setup that JavaPerformer.main does, because Quarkus starts the
  * gRPC server instead of main.
+ *
+ * <p>The performer reports its own user agent, so FIT results show a Quarkus run apart from a Java
+ * run. The FIT driver treats both values like "java-sdk".
  */
 @GrpcService
 public class QuarkusPerformer extends JavaPerformer {
@@ -38,5 +43,11 @@ public class QuarkusPerformer extends JavaPerformer {
                     err.toString(), Arrays.stream(err.getStackTrace()).map(StackTraceElement::toString).collect(Collectors.joining("\n\t")));
         });
         LogRedaction.setRedactionLevel(RedactionLevel.PARTIAL);
+    }
+
+    @Override
+    protected void customisePerformerCaps(PerformerCapsFetchResponse.Builder response) {
+        super.customisePerformerCaps(response);
+        response.setPerformerUserAgent(ImageMode.current().isNativeImage() ? "quarkus-native" : "quarkus");
     }
 }
