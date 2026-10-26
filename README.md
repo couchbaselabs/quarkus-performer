@@ -3,6 +3,26 @@
 This project is a proof of concept to "port" over our Java FIT Performer to use the Couchbase Quarkus extension.
 It starts a gRPC server which executes FIT Driver (gRPC client) requests against a Couchbase server.
 
+## Updating the performer
+Most of the code under `src/main` is a copy of the Java FIT performer and its protocol from
+[couchbase-jvm-clients](https://github.com/couchbase/couchbase-jvm-clients). `updatePerformer.sh` regenerates
+that copy for the Java SDK version that a quarkus-couchbase checkout ships, then applies the Quarkus changes:
+
+```shell script
+QUARKUS_COUCHBASE_DIR=../quarkus-couchbase ./updatePerformer.sh
+```
+
+Only `QuarkusPerformer.java`, `ReflectionProcessing.java` and the files in `quarkus-overrides/` belong to this
+project. The script replaces everything else, and it fails if a Quarkus change no longer applies.
+
+## Prebuilt images
+The `Publish FIT performer images` workflow builds the performer against a quarkus-couchbase tag, branch or PR ref,
+checks that it starts and answers `performerCapsFetch`, and publishes two images:
+- `ghcr.io/couchbaselabs/quarkus-fit-performer:<tag>`, JVM mode
+- `ghcr.io/couchbaselabs/quarkus-native-fit-performer:<tag>`, native mode
+
+Run it from the Actions tab. It only runs manually for now.
+
 ## Running the tests
 You'll need:
 - quarkus-performer (FIT Performer, a gRPC Server)
