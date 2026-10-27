@@ -80,17 +80,14 @@
             <artifactId>rest-assured</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- Bumped to the 2.x OpenTelemetry instrumentation train (the Couchbase SDK 3.13.0
-             shaded GrpcTelemetryBuilder references non-shaded 2.x classes, notably
-             io.opentelemetry.instrumentation.api.incubator.semconv.rpc.RpcAttributesGetter).
-             This coordinate transitively brings opentelemetry-instrumentation-api-incubator,
-             which holds that class. The instrumentation-api / -incubator versions themselves
-             are governed by the Quarkus BOM (2.26.1 train) so they stay mutually consistent
-             with Quarkus' own opentelemetry extension. -->
+        <!-- Pinned to 1.31.0-alpha to match the version the Couchbase SDK 3.10.1
+             shaded code was built against. The SDK's shaded GrpcTelemetryBuilder
+             references non-shaded classes from opentelemetry-instrumentation-api
+             which changed incompatibly in 2.x. -->
         <dependency>
             <groupId>io.opentelemetry.instrumentation</groupId>
             <artifactId>opentelemetry-grpc-1.6</artifactId>
-            <version>2.23.0-alpha</version>
+            <version>1.31.0-alpha</version>
         </dependency>
         <dependency>
             <groupId>com.couchbase.client</groupId>
@@ -116,12 +113,10 @@
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-sdk</artifactId>
         </dependency>
-        <!-- Version governed by the Quarkus BOM (2.26.1) so it stays consistent with
-             opentelemetry-instrumentation-api-incubator. Do NOT pin a 1.x here: the SDK
-             3.13.0 shaded code needs the 2.x instrumentation API. -->
         <dependency>
             <groupId>io.opentelemetry.instrumentation</groupId>
             <artifactId>opentelemetry-instrumentation-api</artifactId>
+            <version>1.31.0</version>
         </dependency>
         <!-- Required for native image: the Couchbase SDK's shaded GrpcTelemetryBuilder
              references io.opentelemetry.semconv.SemanticAttributes which was removed in
