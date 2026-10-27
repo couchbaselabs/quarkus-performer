@@ -19,35 +19,39 @@ import com.couchbase.InternalPerformerFailure;
 import com.couchbase.JavaSdkCommandExecutor;
 import com.couchbase.client.core.cnc.RequestSpan;
 import com.couchbase.client.core.cnc.tracing.NoopRequestTracer;
-import com.couchbase.client.core.cnc.tracing.ObservabilitySemanticConvention;
+// [if:3.5.1]
 import com.couchbase.client.core.endpoint.CircuitBreakerConfig;
+// [end]
 import com.couchbase.client.core.env.IoConfig;
+// [if:3.2.0]
 import com.couchbase.client.core.env.LoggingMeterConfig;
-import com.couchbase.client.core.env.SecurityConfig;
 import com.couchbase.client.core.env.ThresholdLoggingTracerConfig;
+// [end]
+import com.couchbase.client.core.env.SecurityConfig;
 import com.couchbase.client.core.env.TimeoutConfig;
 import com.couchbase.client.core.msg.kv.DurabilityLevel;
-import com.couchbase.client.core.transaction.cleanup.CleanerFactory;
-import com.couchbase.client.core.transaction.cleanup.CleanerMockFactory;
-import com.couchbase.client.core.transaction.cleanup.ClientRecordFactory;
-import com.couchbase.client.core.transaction.support.TransactionAttemptContextFactory;
 import com.couchbase.client.java.env.ClusterEnvironment;
 import com.couchbase.client.java.json.JsonArray;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.client.java.query.QueryProfile;
 import com.couchbase.client.java.query.QueryScanConsistency;
+// [if:3.3.0]
+import com.couchbase.client.core.transaction.cleanup.CleanerFactory;
+import com.couchbase.client.core.transaction.cleanup.CleanerMockFactory;
+import com.couchbase.client.core.transaction.cleanup.ClientRecordFactory;
+import com.couchbase.client.core.transaction.support.TransactionAttemptContextFactory;
 import com.couchbase.client.java.transactions.TransactionKeyspace;
 import com.couchbase.client.java.transactions.config.TransactionOptions;
 import com.couchbase.client.java.transactions.config.TransactionsCleanupConfig;
 import com.couchbase.client.java.transactions.config.TransactionsConfig;
+// [end]
 import com.couchbase.client.metrics.opentelemetry.OpenTelemetryMeter;
 import com.couchbase.client.protocol.observability.Attribute;
-import com.couchbase.client.protocol.observability.SemanticConvention;
 import com.couchbase.client.protocol.sdk.circuit_breaker.ServiceConfig;
 import com.couchbase.client.protocol.shared.ClusterConfig;
 import com.couchbase.client.protocol.shared.ClusterConnectionCreateRequest;
-import com.couchbase.client.protocol.shared.Durability;
 import com.couchbase.client.protocol.transactions.CommandQuery;
+import com.couchbase.client.protocol.shared.Durability;
 import com.couchbase.client.protocol.transactions.TransactionCreateRequest;
 import com.couchbase.client.protocol.transactions.TransactionQueryOptions;
 import com.couchbase.client.tracing.opentelemetry.OpenTelemetryRequestTracer;
@@ -96,11 +100,31 @@ public class OptionsUtil {
                 var cc = request.getClusterConfig();
                 applyClusterConfig(builder, cc, onClusterConnectionClose);
 
+                // [if:3.3.0]
                 if (request.getClusterConfig().hasTransactionsConfig()) {
                     applyTransactionsConfig(request, getCluster, builder);
                 }
+                // [end]
             }
         };
+    }
+
+    public static
+    ClusterEnvironment.Builder convertClusterConfig(ClusterConnectionCreateRequest request,
+                                                    Supplier<ClusterConnection> getCluster,
+                                                    ArrayList<Runnable> onClusterConnectionClose) {
+        ClusterEnvironment.Builder clusterEnvironment = ClusterEnvironment.builder();
+
+        if (request.hasClusterConfig()) {
+            var cc = request.getClusterConfig();
+
+            applyClusterConfig(clusterEnvironment, cc, onClusterConnectionClose);
+
+            // No need to support transactions here, as this code is now only executed in <3.2.6 mode (transactions
+            // was introduced in 3.3.0)
+        }
+
+        return clusterEnvironment;
     }
 
     private static void applyClusterConfig(ClusterEnvironment.Builder clusterEnvironment,
@@ -183,7 +207,9 @@ public class OptionsUtil {
         }
         if (cc.hasKvScanTimeoutSecs()) {
             if (timeoutConfig == null) timeoutConfig = TimeoutConfig.builder();
+            // [if:3.4.1]
             timeoutConfig.kvScanTimeout(Duration.ofSeconds(cc.getKvScanTimeoutSecs()));
+            // [end]
         }
         if (cc.hasTranscoder()) {
             clusterEnvironment.transcoder(JavaSdkCommandExecutor.convertTranscoder(cc.getTranscoder()));
@@ -222,6 +248,7 @@ public class OptionsUtil {
             if (ioConfig == null) ioConfig = IoConfig.builder();
             ioConfig.idleHttpConnectionTimeout(Duration.ofSeconds(cc.getIdleHttpConnectionTimeoutSecs()));
         }
+        // [if:3.5.1]
         if (cc.hasCircuitBreakerConfig()) {
             if (ioConfig == null) ioConfig = IoConfig.builder();
             var cbcc = cc.getCircuitBreakerConfig();
@@ -250,6 +277,7 @@ public class OptionsUtil {
                 ioConfig.backupCircuitBreakerConfig(cb -> applyCircuitBreakerConfig(cbcc.getBackup(), cb));
             }
         }
+        // [end]
 
         if (ioConfig != null) {
             clusterEnvironment.ioConfig(ioConfig);
@@ -263,22 +291,31 @@ public class OptionsUtil {
         }
 
         if (cc.hasPreferredServerGroup()) {
+            // [if:3.7.4]
             clusterEnvironment.preferredServerGroup(cc.getPreferredServerGroup());
+            // [end]
         }
 
         if (cc.hasAppTelemetryEndpoint()) {
+            // [if:3.8.0]
             clusterEnvironment.appTelemetryEndpoint(cc.getAppTelemetryEndpoint());
+            // [end]
         }
 
         if (cc.hasEnableAppTelemetry()) {
+            // [if:3.8.0]
             clusterEnvironment.disableAppTelemetry(!cc.getEnableAppTelemetry());
+            // [end]
         }
 
+        // [if:3.7.5] first version that allows specifying custom publishOn scheduler
         var userExecutorAndScheduler = UserSchedulerUtil.userExecutorAndScheduler();
         onClusterConnectionClose.add(userExecutorAndScheduler::dispose);
         clusterEnvironment.publishOnScheduler(userExecutorAndScheduler::scheduler);
+        // [end]
     }
 
+    // [if:3.5.1]
     private static void applyCircuitBreakerConfig(ServiceConfig cbc, CircuitBreakerConfig.Builder cb) {
         if (cbc.hasEnabled()) {
             cb.enabled(cbc.getEnabled());
@@ -300,9 +337,11 @@ public class OptionsUtil {
             throw new UnsupportedOperationException("Canary timeout not supported");
         }
     }
+    // [end]
 
     private static void applyTransactionsConfig(ClusterConnectionCreateRequest request, Supplier<ClusterConnection> getCluster, ClusterEnvironment.Builder clusterEnvironment) {
         var tc = request.getClusterConfig().getTransactionsConfig();
+        // [if:3.3.0]
         var builder = TransactionsConfig.builder();
 
         var factory = HooksUtil.configureHooks(tc.getHookList(), getCluster);
@@ -357,11 +396,13 @@ public class OptionsUtil {
         }
 
         clusterEnvironment.transactionsConfig(builder);
+        // [end]
     }
 
     private static void applyObservabilityConfig(ClusterEnvironment.Builder clusterEnvironment, ClusterConfig cc, ArrayList<Runnable> onClusterConnectionClose) {
         var oc = cc.getObservabilityConfig();
 
+        // [if:3.2.0]
         if (oc.hasMetrics() || oc.hasTracing()) {
             SdkTracerProvider tracerProvider = null;
             SdkMeterProvider meterProvider = null;
@@ -427,6 +468,8 @@ public class OptionsUtil {
                 clusterEnvironment.meter(OpenTelemetryMeter.wrap(openTelemetry));
             }
             if (oc.hasTracing()) {
+                // [end]
+                // [if:3.5.0]
                 final SdkTracerProvider tracerProviderForShutdown = tracerProvider;
                 onClusterConnectionClose.add(() -> {
                     logger.info("Shutting down tracer provider");
@@ -435,6 +478,8 @@ public class OptionsUtil {
                 });
                 var tracer = OpenTelemetryRequestTracer.wrap(openTelemetry);
                 clusterEnvironment.requestTracer(tracer);
+                // [end]
+                // [if:3.2.0]
             }
         }
 
@@ -463,9 +508,13 @@ public class OptionsUtil {
             if (tlc.hasAnalyticsThresholdMillis()) {
                 builder.analyticsThreshold(Duration.ofMillis(tlc.getAnalyticsThresholdMillis()));
             }
+            // [end]
+            // [if:3.4.0]
             if (tlc.hasTransactionsThresholdMillis()) {
                 builder.transactionsThreshold(Duration.ofMillis(tlc.getTransactionsThresholdMillis()));
             }
+            // [end]
+            // [if:3.2.0]
             if (tlc.hasSampleSize()) {
                 builder.sampleSize(tlc.getSampleSize());
             }
@@ -502,19 +551,7 @@ public class OptionsUtil {
             clusterEnvironment.orphanReporterConfig(builder);
         }
 
-        if (oc.getObservabilitySemanticConventionOptInCount() > 0) {
-            var list = new ArrayList<ObservabilitySemanticConvention>();
-            oc.getObservabilitySemanticConventionOptInList().forEach(v -> {
-                if (v == SemanticConvention.DATABASE) {
-                    list.add(ObservabilitySemanticConvention.DATABASE);
-                } else if (v == SemanticConvention.DATABASE_DUP) {
-                    list.add(ObservabilitySemanticConvention.DATABASE_DUP);
-                } else {
-                    throw new InternalPerformerFailure(new RuntimeException("Unknown semantic convention " + v));
-                }
-            });
-            clusterEnvironment.observabilitySemanticConventions(list);
-        }
+        // [end]
     }
 
     private static ResourceBuilder createOpenTelemetryResource(Map<String, Attribute> resources) {
@@ -550,6 +587,7 @@ public class OptionsUtil {
         return durabilityLevel;
     }
 
+    // [if:3.3.0]
     public static com.couchbase.client.java.transactions.TransactionQueryOptions transactionQueryOptions(CommandQuery request) {
         com.couchbase.client.java.transactions.TransactionQueryOptions queryOptions = null;
         if (request.hasQueryOptions()) {
@@ -652,6 +690,7 @@ public class OptionsUtil {
         }
         return ptcb;
     }
+    // [end]
 
   public static Duration convertDuration(com.google.protobuf.Duration duration) {
       var nanos = duration.getNanos() + TimeUnit.SECONDS.toNanos(duration.getSeconds());

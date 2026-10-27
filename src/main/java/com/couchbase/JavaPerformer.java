@@ -16,48 +16,27 @@
 package com.couchbase;
 
 import com.couchbase.client.core.cnc.RequestSpan;
-import com.couchbase.client.core.cnc.events.transaction.TransactionCleanupAttemptEvent;
-import com.couchbase.client.core.env.Authenticator;
-import com.couchbase.client.core.env.CertificateAuthenticator;
-import com.couchbase.client.core.env.JwtAuthenticator;
-import com.couchbase.client.core.env.PasswordAuthenticator;
-import com.couchbase.client.core.env.SecurityConfig;
-import com.couchbase.client.core.env.VersionAndGitHash;
 import com.couchbase.client.core.io.CollectionIdentifier;
 import com.couchbase.client.core.logging.LogRedaction;
 import com.couchbase.client.core.logging.RedactionLevel;
+// [if:3.3.0]
+import com.couchbase.client.core.transaction.cleanup.TransactionsCleaner;
 import com.couchbase.client.core.transaction.cleanup.ClientRecord;
 import com.couchbase.client.core.transaction.cleanup.ClientRecordDetails;
-import com.couchbase.client.core.transaction.cleanup.TransactionsCleaner;
-import com.couchbase.client.core.transaction.components.ActiveTransactionRecord;
 import com.couchbase.client.core.transaction.components.ActiveTransactionRecordEntry;
+import com.couchbase.client.core.transaction.components.ActiveTransactionRecord;
 import com.couchbase.client.core.transaction.config.CoreMergedTransactionConfig;
+// [if:3.7.2]
 import com.couchbase.client.core.transaction.forwards.CoreTransactionsExtension;
 import com.couchbase.client.core.transaction.forwards.CoreTransactionsSupportedExtensions;
+// [end]
+// [if:<3.7.2]
+//? import com.couchbase.client.core.transaction.forwards.Extension;
+//? import com.couchbase.client.core.transaction.forwards.Supported;
+// [end]
+import com.couchbase.client.core.cnc.events.transaction.TransactionCleanupAttemptEvent;
 import com.couchbase.client.core.transaction.log.CoreTransactionLogger;
-import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.transactions.config.TransactionsConfig;
-import com.couchbase.client.performer.core.CorePerformer;
-import com.couchbase.client.performer.core.commands.SdkCommandExecutor;
-import com.couchbase.client.performer.core.commands.TransactionCommandExecutor;
-import com.couchbase.client.performer.core.perf.Counters;
-import com.couchbase.client.performer.core.util.PemUtil;
-import com.couchbase.client.protocol.observability.SpanCreateRequest;
-import com.couchbase.client.protocol.observability.SpanCreateResponse;
-import com.couchbase.client.protocol.observability.SpanFinishRequest;
-import com.couchbase.client.protocol.observability.SpanFinishResponse;
-import com.couchbase.client.protocol.performer.Caps;
-import com.couchbase.client.protocol.performer.PerformerCapsFetchResponse;
-import com.couchbase.client.protocol.shared.API;
-import com.couchbase.client.protocol.shared.ClusterConnectionCloseRequest;
-import com.couchbase.client.protocol.shared.ClusterConnectionCloseResponse;
-import com.couchbase.client.protocol.shared.ClusterConnectionCreateRequest;
-import com.couchbase.client.protocol.shared.ClusterConnectionCreateResponse;
-import com.couchbase.client.protocol.shared.Collection;
-import com.couchbase.client.protocol.shared.DisconnectConnectionsRequest;
-import com.couchbase.client.protocol.shared.DisconnectConnectionsResponse;
-import com.couchbase.client.protocol.shared.EchoRequest;
-import com.couchbase.client.protocol.shared.EchoResponse;
 import com.couchbase.client.protocol.transactions.CleanupSet;
 import com.couchbase.client.protocol.transactions.CleanupSetFetchRequest;
 import com.couchbase.client.protocol.transactions.CleanupSetFetchResponse;
@@ -75,11 +54,34 @@ import com.couchbase.transactions.SingleQueryTransactionExecutor;
 import com.couchbase.twoway.TwoWayTransactionBlocking;
 import com.couchbase.twoway.TwoWayTransactionMarshaller;
 import com.couchbase.twoway.TwoWayTransactionReactive;
+import com.couchbase.utils.ResultsUtil;
+import com.couchbase.utils.HooksUtil;
+// [end]
+import com.couchbase.client.performer.core.util.VersionUtil;
+import com.couchbase.client.protocol.observability.SpanCreateRequest;
+import com.couchbase.client.protocol.observability.SpanCreateResponse;
+import com.couchbase.client.protocol.observability.SpanFinishRequest;
+import com.couchbase.client.protocol.observability.SpanFinishResponse;
+import com.couchbase.client.protocol.performer.Caps;
+import com.couchbase.client.performer.core.commands.TransactionCommandExecutor;
+import com.couchbase.client.protocol.shared.Collection;
+import com.couchbase.client.performer.core.CorePerformer;
+import com.couchbase.client.performer.core.commands.SdkCommandExecutor;
+import com.couchbase.client.performer.core.perf.Counters;
+import com.couchbase.client.protocol.performer.PerformerCapsFetchResponse;
+import com.couchbase.client.protocol.shared.API;
+import com.couchbase.client.protocol.shared.ClusterConnectionCloseRequest;
+import com.couchbase.client.protocol.shared.ClusterConnectionCloseResponse;
+import com.couchbase.client.protocol.shared.ClusterConnectionCreateRequest;
+import com.couchbase.client.protocol.shared.ClusterConnectionCreateResponse;
+import com.couchbase.client.protocol.shared.DisconnectConnectionsRequest;
+import com.couchbase.client.protocol.shared.DisconnectConnectionsResponse;
+import com.couchbase.client.protocol.shared.EchoRequest;
+import com.couchbase.client.protocol.shared.EchoResponse;
 import com.couchbase.utils.Capabilities;
 import com.couchbase.utils.ClusterConnection;
-import com.couchbase.utils.HooksUtil;
 import com.couchbase.utils.OptionsUtil;
-import com.couchbase.utils.ResultsUtil;
+import com.couchbase.utils.UserSchedulerUtil;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.Status;
@@ -92,7 +94,6 @@ import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -101,7 +102,9 @@ import java.util.stream.Collectors;
 
 import static com.couchbase.client.core.io.CollectionIdentifier.DEFAULT_COLLECTION;
 import static com.couchbase.client.core.io.CollectionIdentifier.DEFAULT_SCOPE;
+// [if:3.7.2]
 import static com.couchbase.client.java.transactions.internal.TransactionsSupportedExtensionsUtil.SUPPORTED;
+// [end]
 
 @io.smallrye.common.annotation.Blocking
 public class JavaPerformer extends CorePerformer {
@@ -122,15 +125,27 @@ public class JavaPerformer extends CorePerformer {
 
     @Override
     protected TransactionCommandExecutor transactionsExecutor(com.couchbase.client.protocol.run.Workloads workloads, Counters counters) {
+        // [if:3.3.0]
         var connection = clusterConnections.get(workloads.getClusterConnectionId());
         return new JavaTransactionCommandExecutor(connection, counters, spans);
+        // [else]
+        //? return null;
+        // [end]
     }
 
     @Override
     protected void customisePerformerCaps(PerformerCapsFetchResponse.Builder response) {
         response.addAllSdkImplementationCaps(Capabilities.sdkImplementationCaps());
-        response.setLibraryVersion(VersionAndGitHash.from(Cluster.class).version());
+        var sdkVersion = VersionUtil.introspectSDKVersionJava();
+        if (sdkVersion == null) {
+            // Not entirely clear why this fails sometimes on CI, return something sort of sensible as a default.
+            sdkVersion = "3.5.0";
+            logger.warn("Unable to introspect the sdk version, forcing it to {}", sdkVersion);
+        }
+        response.setLibraryVersion(sdkVersion);
 
+        // [if:3.3.0]
+        // [if:3.7.2]
         for (CoreTransactionsExtension ext : SUPPORTED.extensions) {
             try {
                 var pc = com.couchbase.client.protocol.transactions.Caps.valueOf(ext.name());
@@ -154,49 +169,41 @@ public class JavaPerformer extends CorePerformer {
             protocolVersion, response.getPerformerCapsList());
         response.addPerformerCaps(Caps.TRANSACTIONS_WORKLOAD_1);
         response.addPerformerCaps(Caps.TRANSACTIONS_SUPPORT_1);
+        // [end]
+
+        // [if:<3.7.2]
+//?        for (Extension ext : Extension.SUPPORTED) {
+//?            try {
+//?                var pc = com.couchbase.client.protocol.transactions.Caps.valueOf(ext.name());
+//?                response.addTransactionImplementationsCaps(pc);
+//?            } catch (IllegalArgumentException err) {
+//?                if (ext.name().equals("EXT_CUSTOM_METADATA")) {
+//?                    response.addTransactionImplementationsCaps(com.couchbase.client.protocol.transactions.Caps.EXT_CUSTOM_METADATA_COLLECTION);
+//?                } else {
+//?                    logger.warn("Could not find FIT extension for " + ext.name());
+//?                }
+//?            }
+//?        }
+//?        var supported = new Supported();
+//?        var protocolVersion = supported.protocolMajor + "." + supported.protocolMinor;
+//?        response.setTransactionsProtocolVersion(protocolVersion);
+//?        logger.info("Performer implements protocol {} with caps {}",
+//?                protocolVersion, response.getPerformerCapsList());
+//?        response.addPerformerCaps(Caps.TRANSACTIONS_WORKLOAD_1);
+//?        response.addPerformerCaps(Caps.TRANSACTIONS_SUPPORT_1);
+        // [end]
+        // [end]
+
 
         response.addSupportedApis(API.ASYNC);
         response.addPerformerCaps(Caps.CLUSTER_CONFIG_1);
         response.addPerformerCaps(Caps.CLUSTER_CONFIG_CERT);
         response.addPerformerCaps(Caps.CLUSTER_CONFIG_INSECURE);
+        // Some observability options blocks changed name here
+        // [if:3.2.0]
+        // [end]
         response.addPerformerCaps(Caps.TIMING_ON_FAILED_OPS);
-        response.addPerformerCaps(Caps.AS_NULL_CONTENT_TYPE_SUPPORT);
         response.setPerformerUserAgent("java-sdk");
-    }
-
-    private Authenticator getSdkAuthenticator(ClusterConnectionCreateRequest request) {
-        if (!request.hasAuthenticator()) {
-            return PasswordAuthenticator.create(
-                request.getClusterUsername(),
-                request.getClusterPassword()
-            );
-        }
-
-        return toSdkAuthenticator(request.getAuthenticator());
-    }
-    
-    public static Authenticator toSdkAuthenticator(com.couchbase.client.protocol.shared.Authenticator fitAuth) {
-      if (fitAuth.hasPasswordAuth()) {
-        var fitUsernameAndPassword = fitAuth.getPasswordAuth();
-        return PasswordAuthenticator.create(
-                fitUsernameAndPassword.getUsername(),
-                fitUsernameAndPassword.getPassword()
-        );
-      }
-
-      if (fitAuth.hasCertificateAuth()) {
-        var fitClientCert = fitAuth.getCertificateAuth();
-        var privateKey = PemUtil.parseRsaPrivateCrtKey(fitClientCert.getKey());
-        var certChain = SecurityConfig.decodeCertificates(List.of(fitClientCert.getCert()));
-        return CertificateAuthenticator.fromKey(privateKey, null, certChain);
-      }
-
-      if (fitAuth.hasJwtAuth()) {
-        var fitJwtAuth = fitAuth.getJwtAuth();
-        return JwtAuthenticator.create(fitJwtAuth.getJwt());
-      }
-
-      throw new UnsupportedOperationException("Unrecognized authenticator: " + fitAuth);
     }
 
     @Override
@@ -224,14 +231,29 @@ public class JavaPerformer extends CorePerformer {
                 });
             });
 
-            Authenticator authenticator = getSdkAuthenticator(request);
-
+            // [if:3.2.6]
+            // 3.2.6 added an easy way for SDK users to configure the SDK without having to take ownership of
+            // ClusterEnvironment management.  It also allows passing parameters in the connection string, which
+            // is not allowed with those externally owned ClusterEnvironments.
             var clusterEnvironment = OptionsUtil.convertClusterConfigToConsumer(request, getCluster, onClusterConnectionClose);
 
             var connection = new ClusterConnection(request.getClusterHostname(),
-                    authenticator,
+                    request.getClusterUsername(),
+                    request.getClusterPassword(),
                     clusterEnvironment,
                     onClusterConnectionClose);
+            // [end]
+
+            // [if:<3.2.6]
+            // Support falling back to the original way of creating
+            //? var clusterEnvironment = OptionsUtil.convertClusterConfig(request, getCluster, onClusterConnectionClose);
+
+            //? var connection = new ClusterConnection(request.getClusterHostname(),
+            //?         request.getClusterUsername(),
+            //?         request.getClusterPassword(),
+            //?         clusterEnvironment,
+            //?         onClusterConnectionClose);
+            // [end]
 
             clusterConnections.put(clusterConnectionId, connection);
             logger.info("Created cluster connection {} for user {}, now have {}",
@@ -239,7 +261,7 @@ public class JavaPerformer extends CorePerformer {
 
             // Fine to have a default and a per-test connection open, any more suggests a leak
             logger.info("Dumping {} cluster connections for resource leak troubleshooting:", clusterConnections.size());
-            clusterConnections.forEach((key, value) -> logger.info("Cluster connection {} {}", key, value.authenticator));
+            clusterConnections.forEach((key, value) -> logger.info("Cluster connection {} {}", key, value.username));
 
             responseObserver.onNext(ClusterConnectionCreateResponse.newBuilder()
                     .setClusterConnectionCount(clusterConnections.size())
@@ -262,14 +284,15 @@ public class JavaPerformer extends CorePerformer {
         responseObserver.onCompleted();
     }
 
+    // [if:3.3.0]
     @Override
     public void transactionCreate(TransactionCreateRequest request,
                                   StreamObserver<TransactionResult> responseObserver) {
         try {
             ClusterConnection connection = getClusterConnection(request.getClusterConnectionId());
 
-            logger.info("Starting transaction on cluster connection {} created with authenticator {}",
-                    request.getClusterConnectionId(), connection.authenticator);
+            logger.info("Starting transaction on cluster connection {} created for user {}",
+                    request.getClusterConnectionId(), connection.username);
 
             TransactionResult response;
             var counters = new Counters();
@@ -289,6 +312,7 @@ public class JavaPerformer extends CorePerformer {
             responseObserver.onError(Status.ABORTED.withDescription(err.toString()).asException());
         }
     }
+    // [end]
 
     @Override
     public  void echo(EchoRequest request , StreamObserver<EchoResponse> responseObserver){
@@ -318,6 +342,7 @@ public class JavaPerformer extends CorePerformer {
         }
     }
 
+    // [if:3.3.0]
     @Override
     public StreamObserver<TransactionStreamDriverToPerformer> transactionStream(
             StreamObserver<TransactionStreamPerformerToDriver> toTest) {
@@ -325,11 +350,13 @@ public class JavaPerformer extends CorePerformer {
 
         return marshaller.run(toTest);
     }
+    // [end]
 
     private static CollectionIdentifier collectionIdentifierFor(com.couchbase.client.protocol.transactions.DocId doc) {
         return new CollectionIdentifier(doc.getBucketName(), Optional.of(doc.getScopeName()), Optional.of(doc.getCollectionName()));
     }
 
+    // [if:3.3.0]
     @Override
     public void transactionCleanup(TransactionCleanupRequest request,
                                    StreamObserver<TransactionCleanupAttempt> responseObserver) {
@@ -341,7 +368,12 @@ public class JavaPerformer extends CorePerformer {
             var collection = collectionIdentifierFor(request.getAtr());
             connection.waitUntilReady(collection);
             var cleanupHooks = HooksUtil.configureCleanupHooks(request.getHookList(), () -> connection);
+            // [if:3.7.2]
             var cleaner = new TransactionsCleaner(connection.core(), cleanupHooks, SUPPORTED);
+            // [end]
+            // [if:<3.7.2]
+            //? var cleaner = new TransactionsCleaner(connection.core(), cleanupHooks);
+            // [end]
             var logger = new CoreTransactionLogger(null, "");
             var merged = new CoreMergedTransactionConfig(config);
 
@@ -412,7 +444,8 @@ public class JavaPerformer extends CorePerformer {
                 ClientRecordDetails result = cr.processClient(request.getClientUuid(),
                                 collection,
                                 config,
-                                null);
+                                null)
+                        .block();
 
                 response.setSuccess(true)
                         .setNumActiveClients(result.numActiveClients())
@@ -445,16 +478,16 @@ public class JavaPerformer extends CorePerformer {
         try {
             var connection = getClusterConnection(request.getClusterConnectionId());
 
-            logger.info("Performing single query transaction on cluster connection {} (authenticator {})",
+            logger.info("Performing single query transaction on cluster connection {} (user {})",
                     request.getClusterConnectionId(),
-                    connection.authenticator);
+                    connection.username);
 
             TransactionSingleQueryResponse ret = SingleQueryTransactionExecutor.execute(request, connection, spans);
 
             responseObserver.onNext(ret);
             responseObserver.onCompleted();
         } catch (Throwable err) {
-            logger.error("Operation failed during transactionSingleQuery due to : " + err.toString(), err);
+            logger.error("Operation failed during transactionSingleQuery due to : " + err.toString());
             responseObserver.onError(Status.ABORTED.withDescription(err.toString()).asException());
         }
     }
@@ -481,6 +514,7 @@ public class JavaPerformer extends CorePerformer {
             responseObserver.onError(Status.ABORTED.withDescription(err.toString()).asException());
         }
     }
+    // [end]
 
     @Override
     public void spanCreate(SpanCreateRequest request, StreamObserver<SpanCreateResponse> responseObserver) {
@@ -492,6 +526,8 @@ public class JavaPerformer extends CorePerformer {
                 .environment()
                 .requestTracer()
                 .requestSpan(request.getName(), parent);
+        // RequestSpan interface finalised here
+        // [if:3.1.6]
         request.getAttributesMap().forEach((k, v) -> {
             if (v.hasValueBoolean()) {
                 span.attribute(k, v.getValueBoolean());
@@ -504,6 +540,7 @@ public class JavaPerformer extends CorePerformer {
             }
             else throw new UnsupportedOperationException();
         });
+        // [end]
         spans.put(request.getId(), span);
         responseObserver.onNext(SpanCreateResponse.getDefaultInstance());
         responseObserver.onCompleted();
@@ -511,7 +548,9 @@ public class JavaPerformer extends CorePerformer {
 
     @Override
     public void spanFinish(SpanFinishRequest request, StreamObserver<SpanFinishResponse> responseObserver) {
+        // [if:3.1.6]
         spans.get(request.getId()).end();
+        // [end]
         spans.remove(request.getId());
         responseObserver.onNext(SpanFinishResponse.getDefaultInstance());
         responseObserver.onCompleted();

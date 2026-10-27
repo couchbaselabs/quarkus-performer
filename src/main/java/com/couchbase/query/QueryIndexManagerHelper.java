@@ -16,6 +16,8 @@
 
 package com.couchbase.query;
 
+// [skip:<3.4.3]
+
 import com.couchbase.client.core.cnc.RequestSpan;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.Collection;
@@ -561,7 +563,9 @@ public class QueryIndexManagerHelper {
       if (opts.hasWatchPrimary()) out.watchPrimary(opts.getWatchPrimary());
       if (opts.hasScopeName()) out.scopeName(opts.getScopeName());
       if (opts.hasCollectionName()) out.collectionName(opts.getCollectionName());
+      // [start:3.4.3]
       if (opts.hasParentSpanId()) out.parentSpan(spans.get(opts.getParentSpanId()));
+      // [end:3.4.3]
       return out;
     } else {
       return null;

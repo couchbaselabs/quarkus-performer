@@ -70,11 +70,6 @@ message OrphanResponseConfig {
     optional bool enabled = 3;
 }
 
-enum SemanticConvention {
-    DATABASE = 0;
-    DATABASE_DUP = 1;
-}
-
 message Config {
     // If not sent, the performer should not enable tracing output.
     optional TracingConfig tracing = 1;
@@ -91,11 +86,6 @@ message Config {
     optional LoggingMeterConfig logging_meter = 5;
 
     optional OrphanResponseConfig orphan_response = 6;
-
-    // If sent, the performer should set the corresponding ClusterOptions field.
-    // Will only be sent iff the performer declares support for SDK_STABLE_OTEL_SEMANTIC_CONVENTIONS,
-    // but not SDK_STABLE_OTEL_SEMANTIC_CONVENTIONS_EMITTED_BY_DEFAULT
-    repeated SemanticConvention observability_semantic_convention_opt_in = 7;
 }
 
 

@@ -10,6 +10,7 @@ option java_multiple_files = true;
 import "shared.basic.proto";
 import "shared.content.proto";
 import "shared.doc_location.proto";
+import "streams.top_level.proto";
 
 // Performer will return a MutateInResult
 message MutateIn {
@@ -47,8 +48,6 @@ message MutateInOptions {
   optional bool preserve_expiry = 9;
 
   optional bool create_as_deleted = 10;
-
-  optional string parent_span_id = 11;
 }
 
 enum StoreSemantics {

@@ -1,11 +1,12 @@
 name: Publish FIT performer images
 
+# One-off build for quarkus-couchbase 1.4.1. The SDK 3.10.1 performer sources are committed.
+#
 # Builds the Quarkus FIT performer against one quarkus-couchbase ref and publishes two images:
 #   ghcr.io/<owner>/quarkus-fit-performer:<tag>         JVM mode
 #   ghcr.io/<owner>/quarkus-native-fit-performer:<tag>  native mode (Mandrel)
 #
-# The performer code comes from the Java FIT performer of the Java SDK version that the given
-# quarkus-couchbase ref ships. The image tag follows the FIT performer image conventions in
+# The image tag follows the FIT performer image conventions in
 # https://github.com/couchbaselabs/sdk-docker-build-action, based on the quarkus-couchbase ref.
 
 run-name: quarkus-couchbase ${{ inputs.quarkus_couchbase_ref }}
@@ -17,6 +18,11 @@ on:
         description: "quarkus-couchbase ref: a tag like '1.4.2', a branch like 'main', a full commit hash, or a PR ref like 'refs/pull/244/head'"
         required: true
         type: string
+      extra_tag:
+        description: "Optional extra image tag to push as well"
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.quarkus_couchbase_ref }}
@@ -85,9 +91,6 @@ jobs:
       - name: Build quarkus-couchbase
         run: $MVN -B --no-transfer-progress -f quarkus-couchbase/pom.xml install -DskipTests
 
-      - name: Generate the performer for the SDK that quarkus-couchbase ships
-        run: QUARKUS_COUCHBASE_DIR=quarkus-couchbase ./updatePerformer.sh
-
       - name: Read versions
         shell: bash
         run: |
@@ -147,12 +150,19 @@ jobs:
 
       - name: Push the image
         shell: bash
+        env:
+          EXTRA_TAG: ${{ inputs.extra_tag }}
         run: |
           docker push "$IMAGE:$IMAGE_TAG"
+          if [ -n "$EXTRA_TAG" ]; then
+            docker tag "$IMAGE:$IMAGE_TAG" "$IMAGE:$EXTRA_TAG"
+            docker push "$IMAGE:$EXTRA_TAG"
+          fi
           PINNED=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$IMAGE_TAG")
           {
             echo "### ${{ matrix.mode }}"
             echo "- 🔖 \`$IMAGE:$IMAGE_TAG\`"
+            if [ -n "$EXTRA_TAG" ]; then echo "- 🔖 \`$IMAGE:$EXTRA_TAG\`"; fi
             echo "- 📌 \`$PINNED\`"
             echo "- Java SDK $SDK_VERSION, Quarkus $QUARKUS_VERSION, quarkus-couchbase \`${{ inputs.quarkus_couchbase_ref }}\` ($QUARKUS_COUCHBASE_SHA)"
           } >> "$GITHUB_STEP_SUMMARY"

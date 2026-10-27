@@ -6,6 +6,7 @@
 #   QUARKUS_COUCHBASE_DIR=../quarkus-couchbase ./updatePerformer.sh
 # Or set them directly:
 #   SDK_VERSION=3.13.0 QUARKUS_VERSION=3.40.1 QUARKUS_COUCHBASE_VERSION=1.4.2 ./updatePerformer.sh
+# For an SDK without fit-performer-protocol, set PROTO_DIR to an absolute path that holds the FIT protos.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -48,20 +49,20 @@ perl -0pi -e "s|<quarkus.platform.version>[^<]*<|<quarkus.platform.version>${QUA
 perl -0pi -e "s|<couchbase-client.version>[^<]*<|<couchbase-client.version>${SDK_VERSION}<|" pom.xml
 perl -0pi -e "s|<quarkus-couchbase.version>[^<]*<|<quarkus-couchbase.version>${QUARKUS_COUCHBASE_VERSION}<|" pom.xml
 
-echo "Fetching the FIT performer and protocol from couchbase-jvm-clients $SDK_VERSION"
+echo "Fetching the FIT performer from couchbase-jvm-clients $SDK_VERSION"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+sparse=(/core-fit-performer/src/main/java/ /java-fit-performer/src/main/java/)
+if [ -z "${PROTO_DIR:-}" ]; then sparse+=(/fit-performer-protocol/fit-protocol/operational/); fi
 git clone -q --depth=1 --filter=blob:none --no-checkout --branch "$SDK_VERSION" "$SDK_REPO" "$work/sdk"
-git -C "$work/sdk" sparse-checkout set --no-cone \
-  /core-fit-performer/src/main/java/ \
-  /java-fit-performer/src/main/java/ \
-  /fit-performer-protocol/fit-protocol/operational/
+git -C "$work/sdk" sparse-checkout set --no-cone "${sparse[@]}"
 git -C "$work/sdk" checkout -q
-protocol="$work/sdk/fit-performer-protocol/fit-protocol/operational"
+protocol=${PROTO_DIR:-"$work/sdk/fit-performer-protocol/fit-protocol/operational"}
 if [ ! -d "$protocol" ]; then
-  echo "SDK $SDK_VERSION has no fit-performer-protocol/fit-protocol/operational directory" >&2
+  echo "Protocol directory $protocol does not exist" >&2
   exit 1
 fi
+echo "Using the FIT protocol from $protocol"
 
 echo "Replacing the copied sources and protos"
 keep=$(mktemp -d)

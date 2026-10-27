@@ -16,6 +16,8 @@
 
 package com.couchbase.manager;
 
+// [skip:<3.4.12]
+
 import com.couchbase.client.core.cnc.RequestSpan;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.ReactiveCluster;

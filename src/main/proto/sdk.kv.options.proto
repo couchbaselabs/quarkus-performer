@@ -86,8 +86,6 @@ message GetAllReplicasOptions {
 
     // Will only be sent if support is declared for SDK_ZONE_AWARE_READ_FROM_REPLICA
     optional shared.ReadPreference read_preference = 3;
-
-    optional string parent_span_id = 4;
 }
 
 message GetAnyReplicaOptions {
@@ -96,12 +94,4 @@ message GetAnyReplicaOptions {
 
     // Will only be sent if support is declared for SDK_ZONE_AWARE_READ_FROM_REPLICA
     optional shared.ReadPreference read_preference = 3;
-
-    optional string parent_span_id = 4;
-}
-
-message GetReplicaOptions {
-    optional int32 timeout_msecs = 1;
-    optional shared.Transcoder transcoder = 2;
-    optional string parent_span_id = 3;
 }

@@ -138,28 +138,4 @@ enum Caps {
 
   // The SDK supports JwtAuthenticator.
   SDK_JWT = 36;
-
-  // The SDK supports the stable OpenTelemetry semantic conventions (ExtendedObservability RFC Rev 26)
-  SDK_STABLE_OTEL_SEMANTIC_CONVENTIONS = 37;
-
-  // The SDK emits the stable OpenTelemetry semantic conventions by default.
-  // SDK_STABLE_OTEL_SEMANTIC_CONVENTIONS is a pre-requisite. This should only be declared by SDKs that do not
-  // support the legacy semantic conventions (C++ & wrappers, Rust).
-  SDK_STABLE_OTEL_SEMANTIC_CONVENTIONS_EMITTED_BY_DEFAULT = 38;
-
-  // The SDK supports the collection.getOrNull() API.
-  SDK_GET_OR_NULL = 39;
-
-  // The SDK supports the RESUMING status in the result of functions_status() of the eventing management API.
-  SDK_EVENTING_RESUMING_FUNCTION_STATUS = 40;
-
-  // The SDK supports hybrid search score fusion (SDK-RFC 52).
-  SDK_SEARCH_SCORE_FUSION = 41;
-
-  // SDK handles query code 2120.
-  SDK_QUERY_2120 = 42;
-
-  // The SDK has support for the Collection.GetReplica API. This includes the new DocumentNotFoundOnReplicaException,
-  // ReplicaIndexOutOfBoundsException and ReplicaIndexCurrentlyUnavailableException exceptions.
-  SDK_GET_REPLICA = 43;
 }

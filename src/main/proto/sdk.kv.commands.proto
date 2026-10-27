@@ -13,7 +13,6 @@ import "shared.content.proto";
 import "shared.basic.proto";
 import "google/protobuf/duration.proto";
 import "streams.top_level.proto";
-import "sdk.kv.replicas.proto";
 
 
 // Performer will return a MutationResult
@@ -26,16 +25,6 @@ message Insert {
 // Performer will return a GetResult
 message Get {
   shared.DocLocation location = 1;
-  optional GetOptions options = 2;
-
-  shared.ContentAs content_as = 3;
-}
-
-// Performer will return a GetResult or a Result.null_result=true
-message GetOrNull {
-  shared.DocLocation location = 1;
-  // This must be a GetOrNullOptions block in the SDK in case they ever diverge, but in FIT where future breakage is
-  // more easily patched, we can be lazy and DRY.
   optional GetOptions options = 2;
 
   shared.ContentAs content_as = 3;
@@ -67,15 +56,6 @@ message GetAnyReplica {
   optional GetAnyReplicaOptions options = 2;
 
   shared.ContentAs content_as = 3;
-}
-
-// Performer will return a GetReplicaResult
-message GetReplica {
-  shared.DocLocation location = 1;
-  replicas.GetReplicaStrategy strategy = 2;
-  optional GetReplicaOptions options = 3;
-
-  shared.ContentAs content_as = 4;
 }
 
 // Performer will return an empty result with success set

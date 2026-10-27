@@ -16,6 +16,8 @@
 
 package com.couchbase.manager;
 
+// [skip:<3.2.4]
+
 import com.couchbase.client.core.cnc.RequestSpan;
 import com.couchbase.client.core.msg.kv.DurabilityLevel;
 import com.couchbase.client.java.Cluster;
@@ -264,6 +266,7 @@ public class BucketManagerHelper {
       if (response.maxExpiry() != null) {
         builder.setMaxExpirySeconds((int) response.maxExpiry().toSeconds());
       }
+      // [if:3.4.12]
       if (response.historyRetentionBytes() != null) {
         builder.setHistoryRetentionBytes(response.historyRetentionBytes());
       }
@@ -273,11 +276,14 @@ public class BucketManagerHelper {
       if (response.historyRetentionCollectionDefault() != null) {
         builder.setHistoryRetentionCollectionDefault(response.historyRetentionCollectionDefault());
       }
+      // [end]
 
+      // [if:3.8.0]
       Integer numVBuckets = response.numVBuckets();
       if (numVBuckets != null) {
         builder.setNumVbuckets(numVBuckets);
       }
+      // [end]
 
       result.setSdk(com.couchbase.client.protocol.sdk.Result.newBuilder().setSuccess(true)
               .setBucketManagerResult(com.couchbase.client.protocol.sdk.cluster.bucketmanager.Result.newBuilder()
@@ -326,6 +332,7 @@ public class BucketManagerHelper {
       if (bucketSettings.hasStorageBackend()) {
         settings.storageBackend(com.couchbase.client.java.manager.bucket.StorageBackend.of(bucketSettings.getStorageBackend().name().toLowerCase()));
       }
+      // [if:3.4.12]
       // "History Retention can only used with Magma"
       if (bucketSettings.hasHistoryRetentionBytes()) {
         settings.historyRetentionBytes(bucketSettings.getHistoryRetentionBytes());
@@ -336,6 +343,7 @@ public class BucketManagerHelper {
       if (bucketSettings.hasHistoryRetentionCollectionDefault()) {
         settings.historyRetentionCollectionDefault(bucketSettings.getHistoryRetentionCollectionDefault());
       }
+      // [end]
       if (bucketSettings.hasFlushEnabled() && bucketSettings.getFlushEnabled()) {
         settings.flushEnabled(bucketSettings.getFlushEnabled());
       }
@@ -351,9 +359,11 @@ public class BucketManagerHelper {
       if (bucketSettings.hasReplicaIndexes()) {
         settings.replicaIndexes(bucketSettings.getReplicaIndexes());
       }
+      // [if:3.8.0]
       if (bucketSettings.hasNumVbuckets()) {
         settings.numVBuckets(bucketSettings.getNumVbuckets());
       }
+      // [end]
 
       return settings;
     } catch (Exception e) {
@@ -392,10 +402,13 @@ public class BucketManagerHelper {
       if (bucketSettings.hasStorageBackend()) {
         settings.storageBackend(com.couchbase.client.java.manager.bucket.StorageBackend.of(bucketSettings.getStorageBackend().name().toLowerCase()));
       }
+      // [if:3.8.0]
       if (bucketSettings.hasNumVbuckets()) {
         settings.numVBuckets(bucketSettings.getNumVbuckets());
       }
+      // [end]
 
+      // [if:3.4.12]
       // "History Retention can only used with Magma"
       if (bucketSettings.hasHistoryRetentionBytes()) {
         settings.historyRetentionBytes(bucketSettings.getHistoryRetentionBytes());
@@ -406,6 +419,7 @@ public class BucketManagerHelper {
       if (bucketSettings.hasHistoryRetentionCollectionDefault()) {
         settings.historyRetentionCollectionDefault(bucketSettings.getHistoryRetentionCollectionDefault());
       }
+      // [end]
       if (bucketSettings.hasFlushEnabled() && bucketSettings.getFlushEnabled()) {
         settings.flushEnabled(bucketSettings.getFlushEnabled());
       }
