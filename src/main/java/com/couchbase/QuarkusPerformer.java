@@ -24,6 +24,10 @@ import java.util.stream.Collectors;
  *
  * <p>The performer reports its own user agent, so FIT results show a Quarkus run apart from a Java
  * run. The FIT driver treats both values like "java-sdk".
+ *
+ * <p>The image sets QUARKUS_COUCHBASE_VERSION to its tag. The performer adds it to the SDK version as
+ * semver build metadata, for example "3.10.1+quarkus-couchbase.1.4.1". The FIT driver ignores the
+ * part after "+" in its version checks.
  */
 @GrpcService
 public class QuarkusPerformer extends JavaPerformer {
@@ -48,6 +52,10 @@ public class QuarkusPerformer extends JavaPerformer {
     @Override
     protected void customisePerformerCaps(PerformerCapsFetchResponse.Builder response) {
         super.customisePerformerCaps(response);
-        response.setPerformerUserAgent(ImageMode.current().isNativeImage() ? "quarkus-native" : "quarkus");
+        response.setPerformerUserAgent(ImageMode.current().isNativeImage() ? "quarkus-native" : "quarkus-jvm");
+        String extensionVersion = System.getenv("QUARKUS_COUCHBASE_VERSION");
+        if (extensionVersion != null && !extensionVersion.isBlank()) {
+            response.setLibraryVersion(response.getLibraryVersion() + "+quarkus-couchbase." + extensionVersion.trim());
+        }
     }
 }
