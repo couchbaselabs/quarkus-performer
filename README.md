@@ -21,6 +21,9 @@ checks that it starts and answers `performerCapsFetch`, and publishes two images
 - `ghcr.io/couchbaselabs/quarkus-fit-performer:<tag>`, JVM mode
 - `ghcr.io/couchbaselabs/quarkus-native-fit-performer:<tag>`, native mode
 
+The performer reports the image tag as the quarkus-couchbase version, after the SDK version, for example
+`3.10.1+quarkus-couchbase.1.4.1`.
+
 Run it from the Actions tab. It only runs manually for now.
 
 ## Running the tests
