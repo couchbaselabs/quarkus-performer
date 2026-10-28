@@ -9,6 +9,8 @@ COPY --chown=185 target/quarkus-app/quarkus/ /deployments/quarkus/
 
 USER 185
 ENV LOG_LEVEL=INFO
+ARG QUARKUS_COUCHBASE_VERSION
+ENV QUARKUS_COUCHBASE_VERSION=$QUARKUS_COUCHBASE_VERSION
 ENV JAVA_OPTS_APPEND="-Djava.util.logging.manager=org.jboss.logmanager.LogManager"
 ENV JAVA_APP_JAR="/deployments/quarkus-run.jar"
 EXPOSE 8060

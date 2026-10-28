@@ -122,6 +122,7 @@ jobs:
         with:
           context: .
           file: src/main/docker/Dockerfile.${{ matrix.mode }}
+          build-args: QUARKUS_COUCHBASE_VERSION=${{ env.IMAGE_TAG }}
           load: true
           push: false
           tags: ${{ steps.meta.outputs.tags }}
@@ -135,7 +136,7 @@ jobs:
           docker run -d --name performer -p 8060:8060 "$IMAGE:$IMAGE_TAG"
           timeout 60 bash -c 'until docker logs performer 2>&1 | grep -q "started in"; do sleep 1; done'
           grpcurl -plaintext -max-time 30 -import-path src/main/proto -proto performer.proto -d '{}' \
-            localhost:8060 protocol.PerformerService/performerCapsFetch | grep libraryVersion
+            localhost:8060 protocol.PerformerService/performerCapsFetch | grep "libraryVersion.*+quarkus-couchbase.$IMAGE_TAG"
 
       - name: Show performer logs
         if: failure()
